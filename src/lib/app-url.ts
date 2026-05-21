@@ -1,8 +1,15 @@
-// App URL — public base URL for sign links and QR codes
+// App URL — sign links and QR codes (production vs local dev)
 export function getAppUrl(): string {
+  if (process.env.NODE_ENV === "development") {
+    return (
+      process.env.NEXT_PUBLIC_APP_URL_LOCAL ??
+      process.env.NEXT_PUBLIC_APP_URL ??
+      "http://localhost:3000"
+    );
+  }
+
   return (
     process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.NEXT_PUBLIC_APP_URL_LOCAL ??
-    "http://localhost:3000"
+    "https://sign.runverifiedapp.com"
   );
 }

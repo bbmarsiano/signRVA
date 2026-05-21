@@ -1,8 +1,11 @@
-// Topbar — page title from route, notifications, user avatar initials
+// Topbar — page title from route, notifications, user menu with logout
 "use client";
 
-import { usePathname } from "next/navigation";
-import { IconBell } from "@tabler/icons-react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { IconBell, IconLogout } from "@tabler/icons-react";
+import { createClient } from "@/lib/supabase/client";
 import type { User } from "@/types";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -38,8 +41,37 @@ function getInitials(email: string): string {
 
 export default function Topbar({ user }: { user: User }) {
   const pathname = usePathname();
+  const router = useRouter();
   const title = getPageTitle(pathname);
   const initials = getInitials(user.email);
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(event.target as Node)
+      ) {
+        setMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  }
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-6">
@@ -54,12 +86,42 @@ export default function Topbar({ user }: { user: User }) {
           <IconBell size={20} stroke={1.75} />
         </button>
 
-        <div
-          className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold text-white"
-          style={{ backgroundColor: "#0F6E56" }}
-          title={user.email}
-        >
-          {initials}
+        <div className="relative" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold text-white transition-opacity hover:opacity-90"
+            style={{ backgroundColor: "#0F6E56" }}
+            aria-label="Меню на потребителя"
+            aria-expanded={menuOpen}
+          >
+            {initials}
+          </button>
+
+          {menuOpen && (
+            <div className="absolute right-0 z-50 mt-2 w-56 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg">
+              <p className="truncate px-3 py-2 text-xs text-zinc-400">
+                {user.email}
+              </p>
+              <Link
+                href="/billing"
+                onClick={() => setMenuOpen(false)}
+                className="block px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
+              >
+                Профил & настройки
+              </Link>
+              <div className="my-1 border-t border-zinc-100" />
+              <button
+                type="button"
+                disabled={loggingOut}
+                onClick={() => void handleLogout()}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-60"
+              >
+                <IconLogout size={16} stroke={1.75} />
+                {loggingOut ? "Изход..." : "Изход"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

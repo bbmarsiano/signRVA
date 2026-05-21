@@ -1,8 +1,6 @@
 // payment-failed — notify org owner when Stripe invoice payment fails
 import { Resend } from "resend";
-
-const FROM =
-  process.env.RESEND_FROM_EMAIL ?? "Sign <onboarding@resend.dev>";
+import { getResendFrom } from "@/lib/email/from";
 
 export async function sendPaymentFailedEmail({
   to,
@@ -14,7 +12,7 @@ export async function sendPaymentFailedEmail({
   const resend = new Resend(process.env.RESEND_API_KEY);
 
   await resend.emails.send({
-    from: FROM,
+    from: getResendFrom(),
     to,
     subject: "Проблем с плащането — sign.runverifiedapp.com",
     html: `

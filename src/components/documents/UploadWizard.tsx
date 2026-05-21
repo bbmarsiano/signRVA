@@ -315,20 +315,28 @@ export default function UploadWizard() {
       const res = await fetch("/api/documents/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          document_id: createResult.id,
-          email_both_parties: emailBothParties,
-        }),
+        body: JSON.stringify({ document_id: createResult.id }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Грешка при изпращане.");
+        setError(
+          (data.error as string) ??
+            "Грешка при изпращане. Можете да копирате линка или QR кода ръчно."
+        );
         return;
       }
-      router.push("/documents");
-      router.refresh();
+      if (data.success && data.warning) {
+        setError(data.warning as string);
+        return;
+      }
+      if (data.success) {
+        router.push("/documents");
+        router.refresh();
+      }
     } catch {
-      setError("Грешка при изпращане на имейла.");
+      setError(
+        "Грешка при изпращане на имейла. Можете да копирате линка или QR кода ръчно."
+      );
     } finally {
       setSending(false);
     }

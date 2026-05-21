@@ -1,11 +1,13 @@
-// Supabase admin client — service role for storage signed URLs and server-side writes
+// Supabase admin client — service role bypasses RLS for server-side storage/DB
 import { createClient } from "@supabase/supabase-js";
 
-export function createAdminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+export const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { auth: { autoRefreshToken: false, persistSession: false } }
+);
 
-  return createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+/** Alias for supabaseAdmin */
+export function createAdminClient() {
+  return supabaseAdmin;
 }

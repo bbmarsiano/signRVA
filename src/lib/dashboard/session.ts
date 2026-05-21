@@ -2,33 +2,80 @@
 import { createClient } from "@/lib/supabase/server";
 import type { Organization, User } from "@/types";
 
+export const FALLBACK_ORGANIZATION: Organization = {
+  id: "",
+  name: "My Organization",
+  plan: "free",
+  stripe_customer_id: null,
+  stripe_subscription_id: null,
+  documents_used: 0,
+  documents_limit: 3,
+  created_at: new Date().toISOString(),
+};
+
+function fallbackUser(authUser: { id: string; email?: string }): User {
+  return {
+    id: authUser.id,
+    org_id: "",
+    email: authUser.email ?? "",
+    role: "owner",
+    created_at: new Date().toISOString(),
+  };
+}
+
 export async function getDashboardSession(): Promise<{
   user: User;
   organization: Organization;
 } | null> {
-  const supabase = await createClient();
+  try {
+    const supabase = await createClient();
 
-  const {
-    data: { user: authUser },
-  } = await supabase.auth.getUser();
+    const {
+      data: { user: authUser },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-  if (!authUser) return null;
+    if (authError || !authUser) return null;
 
-  const { data: profile } = await supabase
-    .from("users")
-    .select("*")
-    .eq("id", authUser.id)
-    .single<User>();
+    let profile: User | null = null;
+    try {
+      const { data } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", authUser.id)
+        .single<User>();
+      profile = data;
+    } catch {
+      profile = null;
+    }
 
-  if (!profile) return null;
+    const user = profile ?? fallbackUser(authUser);
 
-  const { data: organization } = await supabase
-    .from("organizations")
-    .select("*")
-    .eq("id", profile.org_id)
-    .single<Organization>();
+    let organization: Organization | null = null;
+    if (profile?.org_id) {
+      try {
+        const { data } = await supabase
+          .from("organizations")
+          .select("*")
+          .eq("id", profile.org_id)
+          .single<Organization>();
+        organization = data;
+      } catch {
+        organization = null;
+      }
+    }
 
-  if (!organization) return null;
+    const org = organization ?? {
+      ...FALLBACK_ORGANIZATION,
+      id: profile?.org_id ?? "",
+    };
 
-  return { user: profile, organization };
+    if (!user.org_id && org.id) {
+      user.org_id = org.id;
+    }
+
+    return { user, organization: org };
+  } catch {
+    return null;
+  }
 }
