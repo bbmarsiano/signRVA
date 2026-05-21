@@ -4,6 +4,7 @@ import { IconFileOff } from "@tabler/icons-react";
 import DocumentStatusBadge from "@/components/dashboard/DocumentStatusBadge";
 import DocumentRowActions from "@/components/documents/DocumentRowActions";
 import { getAppUrl } from "@/lib/app-url";
+import { getPendingSignUrl, getSigningType } from "@/lib/sign/signers";
 import { formatDocumentDateTime } from "@/lib/utils/format-datetime";
 import type { Document } from "@/types";
 
@@ -67,7 +68,8 @@ export default function RecentDocumentsTable({
                 <DocumentRowActions
                   documentId={doc.id}
                   status={doc.status}
-                  signUrl={`${appUrl}/sign/${doc.sign_url_token}`}
+                  signingType={getSigningType(doc)}
+                  signUrl={getPendingSignUrl(doc, appUrl)}
                 />
               </td>
             </tr>

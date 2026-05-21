@@ -1,6 +1,8 @@
 // POST /api/documents/send — email signing invite to recipient via Resend
 import { NextResponse } from "next/server";
 import { sendSigningInvite, buildSignUrl } from "@/lib/email/send-document";
+import { getPendingSignUrl, getSigningType, parseSigners } from "@/lib/sign/signers";
+import { getAppUrl } from "@/lib/app-url";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { Document } from "@/types";
@@ -52,12 +54,48 @@ export async function POST(request: Request) {
       );
     }
 
-    const signUrl = buildSignUrl(document.sign_url_token);
+    const signingType = getSigningType(document);
+
+    if (signingType === "self_sign") {
+      return NextResponse.json(
+        { error: "Самоподписът не изисква изпращане на покана." },
+        { status: 400 }
+      );
+    }
+
+    const appUrl = getAppUrl();
+    const parsedSigners = parseSigners(document);
+    let signersToEmail: {
+      name: string;
+      email: string;
+      sign_url_token: string;
+    }[];
+
+    if (signingType === "two_sided" && parsedSigners.length > 0) {
+      if (document.signing_order === "parallel") {
+        signersToEmail = parsedSigners.filter((s) => s.status === "pending");
+      } else {
+        const idx = document.current_signer_index ?? 0;
+        const current = parsedSigners[idx];
+        signersToEmail =
+          current && current.status === "pending" ? [current] : [];
+      }
+    } else if (parsedSigners.length > 0) {
+      signersToEmail = parsedSigners.filter((s) => s.status === "pending");
+    } else {
+      signersToEmail = [
+        {
+          name: document.recipient_name,
+          email: document.recipient_email,
+          sign_url_token: document.sign_url_token,
+        },
+      ];
+    }
+
     let emailSent = false;
     let warning: string | undefined;
 
     console.log("Resend API Key exists:", !!process.env.RESEND_API_KEY);
-    console.log("Sending to:", document.recipient_email);
 
     if (!process.env.RESEND_API_KEY) {
       console.warn(
@@ -67,15 +105,17 @@ export async function POST(request: Request) {
         "Имейлът не беше изпратен (липсва конфигурация). Споделете линка или QR кода ръчно.";
     } else {
       try {
-        await sendSigningInvite({
-          recipientEmail: document.recipient_email,
-          recipientName: document.recipient_name,
-          title: document.title,
-          signUrl,
-          expiresAt: document.expires_at,
-        });
+        for (const signer of signersToEmail) {
+          await sendSigningInvite({
+            recipientEmail: signer.email,
+            recipientName: signer.name,
+            title: document.title,
+            signUrl: buildSignUrl(signer.sign_url_token),
+            expiresAt: document.expires_at,
+          });
+        }
         emailSent = true;
-        console.log("[documents/send] Invitation email sent successfully");
+        console.log("[documents/send] Invitation email(s) sent successfully");
       } catch (err) {
         console.error("[documents/send] Resend error:", err);
         return NextResponse.json(
@@ -93,7 +133,11 @@ export async function POST(request: Request) {
       document_id: documentId,
       event_type: "document.sent",
       actor: user.email ?? "unknown",
-      metadata: { email_sent: emailSent, sign_url: signUrl },
+      metadata: {
+        email_sent: emailSent,
+        sign_url: getPendingSignUrl(document, appUrl),
+        signing_type: signingType,
+      },
       ip_address: ip,
       created_at: new Date().toISOString(),
     });

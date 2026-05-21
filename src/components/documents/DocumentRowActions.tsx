@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   IconCopy,
   IconDownload,
+  IconPencil,
   IconQrcode,
   IconRefresh,
 } from "@tabler/icons-react";
@@ -14,10 +15,12 @@ export default function DocumentRowActions({
   documentId,
   status,
   signUrl,
+  signingType = "one_sided",
 }: {
   documentId: string;
   status: "pending" | "signed" | "expired";
   signUrl: string;
+  signingType?: "one_sided" | "two_sided" | "self_sign";
 }) {
   const [loading, setLoading] = useState(false);
   const [showQr, setShowQr] = useState(false);
@@ -71,6 +74,21 @@ export default function DocumentRowActions({
         >
           <IconDownload size={18} stroke={1.75} />
         </button>
+      </div>
+    );
+  }
+
+  if (status === "pending" && signingType === "self_sign") {
+    return (
+      <div className="flex justify-end">
+        <Link
+          href={signUrl}
+          className={btnClass}
+          aria-label="Подпиши"
+          title="Подпиши"
+        >
+          <IconPencil size={18} stroke={1.75} />
+        </Link>
       </div>
     );
   }

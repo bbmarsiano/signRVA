@@ -61,6 +61,7 @@ export async function sendSignedEmails({
   p7sPath,
   signedAt,
   ipAddress,
+  notifyOwner = true,
 }: {
   recipientEmail: string;
   recipientName: string;
@@ -71,6 +72,7 @@ export async function sendSignedEmails({
   p7sPath?: string | null;
   signedAt: string;
   ipAddress: string;
+  notifyOwner?: boolean;
 }): Promise<void> {
   console.log("Resend API Key exists:", !!process.env.RESEND_API_KEY);
   console.log("Sending signed confirmation to:", recipientEmail);
@@ -114,12 +116,14 @@ export async function sendSignedEmails({
   });
   console.log("Recipient signed email result:", recipientResult);
 
-  const ownerResult = await resend.emails.send({
-    from,
-    to: ownerEmail,
-    subject: `Документът беше подписан: ${title}`,
-    html: ownerHtml,
-    attachments: attachmentPayload,
-  });
-  console.log("Owner signed email result:", ownerResult);
+  if (notifyOwner) {
+    const ownerResult = await resend.emails.send({
+      from,
+      to: ownerEmail,
+      subject: `Документът беше подписан: ${title}`,
+      html: ownerHtml,
+      attachments: attachmentPayload,
+    });
+    console.log("Owner signed email result:", ownerResult);
+  }
 }

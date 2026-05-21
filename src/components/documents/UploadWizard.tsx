@@ -15,8 +15,12 @@ import {
   IconHome,
   IconId,
   IconLoader2,
+  IconPencil,
   IconPrinter,
+  IconUserCheck,
+  IconUsers,
 } from "@tabler/icons-react";
+import type { SigningOrder, SigningType } from "@/types";
 
 const PRIMARY = "#0F6E56";
 const TEMPLATE_SELECTED_BG = "#E6F1FB";
@@ -33,8 +37,10 @@ type TemplateId =
 
 type CreateResult = {
   id: string;
-  qr_url: string;
-  sign_url: string;
+  qr_url?: string;
+  sign_url?: string;
+  redirect_url?: string;
+  self_sign?: boolean;
   expires_at: string;
   token: string;
 };
@@ -123,9 +129,17 @@ export default function UploadWizard() {
   const [title, setTitle] = useState("");
   const [internalNote, setInternalNote] = useState("");
 
+  const [signingType, setSigningType] = useState<SigningType>("one_sided");
+  const [signingOrder, setSigningOrder] = useState<SigningOrder>("sequential");
+
   const [recipientName, setRecipientName] = useState("");
   const [recipientEmail, setRecipientEmail] = useState("");
   const [recipientPhone, setRecipientPhone] = useState("");
+
+  const [signer2Name, setSigner2Name] = useState("");
+  const [signer2Email, setSigner2Email] = useState("");
+  const [signer2Phone, setSigner2Phone] = useState("");
+
   const [ttlHours, setTtlHours] = useState<24 | 48 | 168>(48);
 
   const [biometricRequired, setBiometricRequired] = useState(true);
@@ -184,17 +198,36 @@ export default function UploadWizard() {
     title.trim() && (pdfFile || (templateId && templateId !== "custom"))
   );
 
+  const isSelfSign = signingType === "self_sign";
+  const isTwoSided = signingType === "two_sided";
+
   const canProceedStep2 =
-    recipientName.trim().length > 0 && isValidEmail(recipientEmail.trim());
+    isTwoSided
+      ? recipientName.trim().length > 0 &&
+        isValidEmail(recipientEmail.trim()) &&
+        signer2Name.trim().length > 0 &&
+        isValidEmail(signer2Email.trim())
+      : recipientName.trim().length > 0 && isValidEmail(recipientEmail.trim());
 
   const buildFormData = useCallback(() => {
     const fd = new FormData();
     if (pdfFile) fd.append("pdf", pdfFile);
     if (templateId) fd.append("template_id", templateId);
     fd.append("title", title.trim());
-    fd.append("recipient_name", recipientName.trim());
-    fd.append("recipient_email", recipientEmail.trim());
-    if (recipientPhone.trim()) fd.append("recipient_phone", recipientPhone.trim());
+    fd.append("signing_type", signingType);
+    if (isTwoSided) {
+      fd.append("signing_order", signingOrder);
+      fd.append("signer1_name", recipientName.trim());
+      fd.append("signer1_email", recipientEmail.trim());
+      if (recipientPhone.trim()) fd.append("signer1_phone", recipientPhone.trim());
+      fd.append("signer2_name", signer2Name.trim());
+      fd.append("signer2_email", signer2Email.trim());
+      if (signer2Phone.trim()) fd.append("signer2_phone", signer2Phone.trim());
+    } else if (!isSelfSign) {
+      fd.append("recipient_name", recipientName.trim());
+      fd.append("recipient_email", recipientEmail.trim());
+      if (recipientPhone.trim()) fd.append("recipient_phone", recipientPhone.trim());
+    }
     fd.append("ttl_hours", String(ttlHours));
     fd.append("biometric_required", String(biometricRequired));
     fd.append("attached_signature", String(attachedSignature));
@@ -206,9 +239,16 @@ export default function UploadWizard() {
     pdfFile,
     templateId,
     title,
+    signingType,
+    signingOrder,
+    isTwoSided,
+    isSelfSign,
     recipientName,
     recipientEmail,
     recipientPhone,
+    signer2Name,
+    signer2Email,
+    signer2Phone,
     ttlHours,
     biometricRequired,
     attachedSignature,
@@ -230,19 +270,24 @@ export default function UploadWizard() {
         setError(data.error ?? "Грешка при създаване на документа.");
         return;
       }
-      setCreateResult(data as CreateResult);
+      const result = data as CreateResult;
+      if (result.self_sign && result.redirect_url) {
+        router.push(result.redirect_url);
+        return;
+      }
+      setCreateResult(result);
     } catch {
       setError("Грешка при връзка със сървъра.");
     } finally {
       setCreating(false);
     }
-  }, [buildFormData]);
+  }, [buildFormData, router]);
 
   useEffect(() => {
-    if (step !== 4 || createStarted.current || createResult) return;
+    if (step !== 4 || isSelfSign || createStarted.current || createResult) return;
     createStarted.current = true;
     void createDocument();
-  }, [step, createDocument, createResult]);
+  }, [step, createDocument, createResult, isSelfSign]);
 
   function validateCurrentStep(): boolean {
     setError(null);
@@ -263,14 +308,24 @@ export default function UploadWizard() {
       }
       return true;
     }
-    if (step === 2) {
+    if (step === 2 && !isSelfSign) {
       if (!recipientName.trim()) {
-        setError("Въведете име на получателя.");
+        setError(isTwoSided ? "Въведете име на Страна 1." : "Въведете име на получателя.");
         return false;
       }
       if (!isValidEmail(recipientEmail.trim())) {
-        setError("Въведете валиден имейл адрес.");
+        setError("Въведете валиден имейл за Страна 1.");
         return false;
+      }
+      if (isTwoSided) {
+        if (!signer2Name.trim()) {
+          setError("Въведете име на Страна 2.");
+          return false;
+        }
+        if (!isValidEmail(signer2Email.trim())) {
+          setError("Въведете валиден имейл за Страна 2.");
+          return false;
+        }
       }
       return true;
     }
@@ -279,23 +334,35 @@ export default function UploadWizard() {
 
   function goNext() {
     if (!validateCurrentStep()) return;
+    if (step === 1 && isSelfSign) {
+      setStep(3);
+      return;
+    }
+    if (step === 3 && isSelfSign) {
+      void createDocument();
+      return;
+    }
     setStep((s) => Math.min(4, s + 1));
   }
 
   function goBack() {
     setError(null);
+    if (step === 3 && isSelfSign) {
+      setStep(1);
+      return;
+    }
     setStep((s) => Math.max(1, s - 1));
   }
 
   async function handleCopyLink() {
-    if (!createResult) return;
+    if (!createResult?.sign_url) return;
     await navigator.clipboard.writeText(createResult.sign_url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
   function handleDownloadQr() {
-    if (!createResult) return;
+    if (!createResult?.qr_url) return;
     const a = document.createElement("a");
     a.href = createResult.qr_url;
     a.download = `qr-${title || "document"}.png`;
@@ -392,6 +459,61 @@ export default function UploadWizard() {
         {step === 1 && (
           <div className="space-y-6">
             <h2 className="text-lg font-semibold text-zinc-900">Документ</h2>
+
+            <div>
+              <p className="mb-3 text-sm font-medium text-zinc-700">
+                Тип подписване
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {(
+                  [
+                    {
+                      id: "one_sided" as SigningType,
+                      label: "Едностранен",
+                      desc: "Клиентът подписва, вие получавате",
+                      icon: IconUserCheck,
+                    },
+                    {
+                      id: "two_sided" as SigningType,
+                      label: "Двустранен",
+                      desc: "И двете страни подписват",
+                      icon: IconUsers,
+                    },
+                    {
+                      id: "self_sign" as SigningType,
+                      label: "Самоподпис",
+                      desc: "Подписвате сами веднага",
+                      icon: IconPencil,
+                    },
+                  ] as const
+                ).map((opt) => {
+                  const Icon = opt.icon;
+                  const selected = signingType === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setSigningType(opt.id)}
+                      className="rounded-xl border p-4 text-left transition-colors"
+                      style={
+                        selected
+                          ? {
+                              borderColor: PRIMARY,
+                              backgroundColor: "#E1F5EE",
+                            }
+                          : { borderColor: "#e4e4e7" }
+                      }
+                    >
+                      <Icon size={22} stroke={1.75} className="text-[#085041]" />
+                      <p className="mt-2 text-sm font-semibold text-zinc-900">
+                        {opt.label}
+                      </p>
+                      <p className="mt-0.5 text-xs text-zinc-500">{opt.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
             <input
               ref={fileInputRef}
@@ -570,10 +692,53 @@ export default function UploadWizard() {
         )}
 
         {/* STEP 2 */}
-        {step === 2 && (
+        {step === 2 && !isSelfSign && (
           <div className="grid gap-8 lg:grid-cols-2">
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-zinc-900">Получател</h2>
+              <h2 className="text-lg font-semibold text-zinc-900">
+                {isTwoSided ? "Страни по договора" : "Получател"}
+              </h2>
+
+              {isTwoSided && (
+                <div>
+                  <p className="mb-2 text-sm font-medium text-zinc-700">
+                    Ред на подписване
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSigningOrder("sequential")}
+                      className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${
+                        signingOrder === "sequential"
+                          ? "border-[#0F6E56] bg-[#E1F5EE] text-[#085041]"
+                          : "border-zinc-300 text-zinc-600"
+                      }`}
+                    >
+                      Последователно
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSigningOrder("parallel")}
+                      className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${
+                        signingOrder === "parallel"
+                          ? "border-[#0F6E56] bg-[#E1F5EE] text-[#085041]"
+                          : "border-zinc-300 text-zinc-600"
+                      }`}
+                    >
+                      Едновременно
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {signingOrder === "sequential"
+                      ? "Страна 1 → после Страна 2 получава QR"
+                      : "И двете страни получават QR веднага"}
+                  </p>
+                </div>
+              )}
+
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                {isTwoSided ? "Страна 1" : "Получател"}
+              </p>
 
               <div>
                 <label className="block text-sm font-medium text-zinc-700">
@@ -627,6 +792,47 @@ export default function UploadWizard() {
                   <option value={168}>7 дни</option>
                 </select>
               </div>
+
+              {isTwoSided && (
+                <>
+                  <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                    Страна 2
+                  </p>
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-700">
+                      Пълно име <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      value={signer2Name}
+                      onChange={(e) => setSigner2Name(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm focus:border-[#0F6E56] focus:outline-none focus:ring-2 focus:ring-[#0F6E56]/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-700">
+                      Имейл <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      value={signer2Email}
+                      onChange={(e) => setSigner2Email(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm focus:border-[#0F6E56] focus:outline-none focus:ring-2 focus:ring-[#0F6E56]/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-700">
+                      Телефон
+                    </label>
+                    <input
+                      type="tel"
+                      value={signer2Phone}
+                      onChange={(e) => setSigner2Phone(e.target.value)}
+                      placeholder="+359 88..."
+                      className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm focus:border-[#0F6E56] focus:outline-none focus:ring-2 focus:ring-[#0F6E56]/20"
+                    />
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-5">
@@ -634,24 +840,57 @@ export default function UploadWizard() {
                 Преглед
               </p>
               <dl className="mt-4 space-y-3 text-sm">
-                <div>
-                  <dt className="text-zinc-500">Име</dt>
-                  <dd className="font-medium text-zinc-900">
-                    {recipientName || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-zinc-500">Имейл</dt>
-                  <dd className="font-medium text-zinc-900">
-                    {recipientEmail || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-zinc-500">Телефон</dt>
-                  <dd className="font-medium text-zinc-900">
-                    {recipientPhone || "—"}
-                  </dd>
-                </div>
+                {isTwoSided ? (
+                  <>
+                    <div>
+                      <dt className="text-zinc-500">Страна 1</dt>
+                      <dd className="font-medium text-zinc-900">
+                        {recipientName || "—"}
+                        <span className="block text-xs font-normal text-zinc-500">
+                          {recipientEmail || "—"}
+                        </span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-zinc-500">Страна 2</dt>
+                      <dd className="font-medium text-zinc-900">
+                        {signer2Name || "—"}
+                        <span className="block text-xs font-normal text-zinc-500">
+                          {signer2Email || "—"}
+                        </span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-zinc-500">Ред</dt>
+                      <dd className="font-medium text-zinc-900">
+                        {signingOrder === "sequential"
+                          ? "Последователно"
+                          : "Едновременно"}
+                      </dd>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <dt className="text-zinc-500">Име</dt>
+                      <dd className="font-medium text-zinc-900">
+                        {recipientName || "—"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-zinc-500">Имейл</dt>
+                      <dd className="font-medium text-zinc-900">
+                        {recipientEmail || "—"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-zinc-500">Телефон</dt>
+                      <dd className="font-medium text-zinc-900">
+                        {recipientPhone || "—"}
+                      </dd>
+                    </div>
+                  </>
+                )}
                 <div>
                   <dt className="text-zinc-500">Срок</dt>
                   <dd className="font-medium text-zinc-900">
@@ -671,6 +910,12 @@ export default function UploadWizard() {
         {step === 3 && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-zinc-900">Опции</h2>
+
+            {isSelfSign && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Ще подпишете документа веднага след качването.
+              </div>
+            )}
 
             <ToggleRow
               label="Биометрична верификация"
@@ -823,7 +1068,7 @@ export default function UploadWizard() {
         )}
 
         {/* Navigation */}
-        {step < 4 && (
+        {(step < 4 || (step === 3 && isSelfSign)) && (
           <div className="mt-8 flex items-center justify-between border-t border-zinc-100 pt-6">
             <button
               type="button"
@@ -837,13 +1082,18 @@ export default function UploadWizard() {
               type="button"
               onClick={goNext}
               disabled={
+                creating ||
                 (step === 1 && !canProceedStep1) ||
                 (step === 2 && !canProceedStep2)
               }
               className="rounded-lg px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               style={{ backgroundColor: PRIMARY }}
             >
-              Напред
+              {step === 3 && isSelfSign
+                ? creating
+                  ? "Подготовка..."
+                  : "Към подписване"
+                : "Напред"}
             </button>
           </div>
         )}

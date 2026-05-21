@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { IconFileOff, IconPlus } from "@tabler/icons-react";
 import DocumentStatusBadge from "@/components/dashboard/DocumentStatusBadge";
 import DocumentRowActions from "@/components/documents/DocumentRowActions";
+import SigningTypeBadge from "@/components/documents/SigningTypeBadge";
+import { formatSignersSummary, getPendingSignUrl, getSigningType } from "@/lib/sign/signers";
 import { fetchDocumentsByOrg, getOrgIdForUser } from "@/lib/dashboard/documents-data";
 import { getAppUrl } from "@/lib/app-url";
 import { formatDocumentDateTime } from "@/lib/utils/format-datetime";
@@ -33,7 +35,12 @@ function DocumentsEmptyState() {
   );
 }
 
-export default async function DocumentsPage() {
+export default async function DocumentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ signed?: string }>;
+}) {
+  const { signed } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -49,6 +56,11 @@ export default async function DocumentsPage() {
 
   return (
     <div className="space-y-6">
+      {signed === "1" && (
+        <div className="rounded-lg border border-[#0F6E56]/30 bg-[#E1F5EE] px-4 py-3 text-sm text-[#085041]">
+          Документът беше подписан успешно.
+        </div>
+      )}
       <div className="flex items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-semibold text-zinc-900">Документи</h2>
@@ -83,14 +95,27 @@ export default async function DocumentsPage() {
             <tbody className="divide-y divide-zinc-100">
               {documents.map((doc) => (
                 <tr key={doc.id} className="hover:bg-zinc-50/50">
-                  <td className="px-4 py-3 font-medium text-zinc-900">
-                    {doc.title}
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-zinc-900">
+                        {doc.title}
+                      </span>
+                      <SigningTypeBadge document={doc} />
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-zinc-600">
-                    <div>{doc.recipient_name}</div>
-                    <div className="text-xs text-zinc-400">
-                      {doc.recipient_email}
-                    </div>
+                    {getSigningType(doc) === "two_sided" ? (
+                      <div className="text-sm">
+                        {formatSignersSummary(doc)}
+                      </div>
+                    ) : (
+                      <>
+                        <div>{doc.recipient_name}</div>
+                        <div className="text-xs text-zinc-400">
+                          {doc.recipient_email}
+                        </div>
+                      </>
+                    )}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-zinc-600">
                     {formatDocumentDateTime(doc.created_at)}
@@ -102,7 +127,8 @@ export default async function DocumentsPage() {
                     <DocumentRowActions
                       documentId={doc.id}
                       status={doc.status}
-                      signUrl={`${appUrl}/sign/${doc.sign_url_token}`}
+                      signingType={getSigningType(doc)}
+                      signUrl={getPendingSignUrl(doc, appUrl)}
                     />
                   </td>
                 </tr>

@@ -17,6 +17,7 @@ export default function SignSuccess({
   biometricType,
   documentId,
   signedPdfUrl,
+  message,
 }: {
   recipientName: string;
   recipientEmail: string;
@@ -24,6 +25,7 @@ export default function SignSuccess({
   biometricType: BiometricType;
   documentId: string;
   signedPdfUrl: string | null;
+  message?: string;
 }) {
   const formatted = new Intl.DateTimeFormat("bg-BG", {
     dateStyle: "long",
@@ -40,10 +42,11 @@ export default function SignSuccess({
       </div>
 
       <h1 className="mt-6 text-center text-2xl font-semibold text-zinc-900">
-        Подписано успешно
+        {message ? "Подписът е записан" : "Подписано успешно"}
       </h1>
       <p className="mt-2 text-center text-sm text-zinc-600">
-        Подписаният PDF е изпратен на {recipientEmail} и на изпращача.
+        {message ??
+          `Подписаният PDF е изпратен на ${recipientEmail} и на изпращача.`}
       </p>
 
       <div className="mt-8 space-y-3 rounded-xl border border-zinc-200 bg-white p-4 text-sm">

@@ -7,6 +7,7 @@ import {
   fetchDocumentByToken,
   resolveDocumentStatus,
 } from "@/lib/sign/fetch-document";
+import { findSignerByToken, getSigningType } from "@/lib/sign/signers";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export default async function SignPage({
@@ -39,6 +40,22 @@ export default async function SignPage({
     return <SignAlreadySigned document={document} />;
   }
 
+  const signerMatch = findSignerByToken(document, token);
+  if (signerMatch?.signer.status === "signed") {
+    return (
+      <div className="mx-auto max-w-md px-4 py-16 text-center">
+        <h1 className="text-lg font-semibold text-zinc-900">
+          Вече подписахте
+        </h1>
+        <p className="mt-2 text-sm text-zinc-600">
+          {getSigningType(document) === "two_sided"
+            ? "Очаква се подпис от следващата страна."
+            : "Документът е в процес на обработка."}
+        </p>
+      </div>
+    );
+  }
+
   const supabase = createAdminClient();
   await supabase.from("audit_log").insert({
     org_id: document.org_id,
@@ -56,6 +73,8 @@ export default async function SignPage({
       orgName={organization.name}
       previewUrl={previewUrl}
       token={token}
+      signerLabel={payload.signerLabel}
+      progressLabel={payload.progressLabel}
     />
   );
 }

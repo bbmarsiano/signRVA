@@ -26,11 +26,15 @@ export default function SignForm({
   orgName,
   previewUrl,
   token,
+  signerLabel,
+  progressLabel,
 }: {
   document: Document;
   orgName: string;
   previewUrl: string | null;
   token: string;
+  signerLabel?: string | null;
+  progressLabel?: string | null;
 }) {
   const canvasRef = useRef<SignatureCanvasRef>(null);
   const [biometricType, setBiometricType] = useState<BiometricType>("none");
@@ -43,6 +47,7 @@ export default function SignForm({
   const [success, setSuccess] = useState<{
     signedPdfUrl: string | null;
     signedAt: string;
+    message?: string;
   } | null>(null);
   const [ttl, setTtl] = useState(() => getTtlRemaining(document.expires_at));
 
@@ -89,6 +94,7 @@ export default function SignForm({
       setSuccess({
         signedPdfUrl: data.signed_pdf_url ?? null,
         signedAt: data.signed_at,
+        message: data.message as string | undefined,
       });
     } catch {
       setError("Грешка при връзка със сървъра.");
@@ -106,6 +112,7 @@ export default function SignForm({
         biometricType={biometricType}
         documentId={document.id}
         signedPdfUrl={success.signedPdfUrl}
+        message={success.message}
       />
     );
   }
@@ -134,6 +141,12 @@ export default function SignForm({
       <div className="px-4 py-4 text-white" style={{ backgroundColor: PRIMARY }}>
         <h1 className="text-lg font-semibold leading-snug">{document.title}</h1>
         <p className="mt-1 text-sm text-white/85">Изпратен от {orgName}</p>
+        {signerLabel && (
+          <p className="mt-2 text-sm font-medium text-white/95">{signerLabel}</p>
+        )}
+        {progressLabel && (
+          <p className="mt-1 text-xs text-white/80">{progressLabel}</p>
+        )}
       </div>
 
       <div className="space-y-6 px-4 py-6">
