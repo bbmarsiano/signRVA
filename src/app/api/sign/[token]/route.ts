@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { fetchDocumentByToken, resolveDocumentStatus } from "@/lib/sign/fetch-document";
 import { findSignerByToken, getSigningType } from "@/lib/sign/signers";
 import { processDocumentSignature } from "@/lib/sign/process-signature";
+import { buildFilledPdfFromDocument } from "@/lib/templates/regenerate-pdf";
 import type { BiometricType } from "@/types";
 
 function parseBiometricType(value: string | null): BiometricType {
@@ -81,6 +82,18 @@ export async function POST(
       "unknown";
     const userAgent = request.headers.get("user-agent") ?? "unknown";
 
+    let basePdfBytes: Uint8Array | undefined;
+    if (document.template_id) {
+      const signerIndex = signerMatch?.index ?? 0;
+      const isFirstSigner = signerIndex === 0;
+      if (signingType !== "two_sided" || isFirstSigner) {
+        const filled = await buildFilledPdfFromDocument(document);
+        if (filled) {
+          basePdfBytes = filled;
+        }
+      }
+    }
+
     const result = await processDocumentSignature({
       document,
       orgId: organization.id,
@@ -92,6 +105,7 @@ export async function POST(
       userAgent,
       biometricType,
       webauthnCredentialId,
+      basePdfBytes,
     });
 
     const signer = signerMatch?.signer;

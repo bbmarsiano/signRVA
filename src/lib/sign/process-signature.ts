@@ -30,6 +30,8 @@ export type ProcessSignatureInput = {
   userAgent: string;
   biometricType: BiometricType;
   webauthnCredentialId: string | null;
+  /** Filled template PDF; skips loading original.pdf when set (first signer). */
+  basePdfBytes?: Uint8Array;
 };
 
 export type ProcessSignatureResult = {
@@ -115,6 +117,7 @@ export async function processDocumentSignature(
     userAgent,
     biometricType,
     webauthnCredentialId,
+    basePdfBytes,
   } = input;
 
   const match = findSignerByToken(document, token);
@@ -140,12 +143,9 @@ export async function processDocumentSignature(
     signers.length >= 2 ? signers.length : signerCount
   );
 
-  const pdfBytes = await loadPdfForSigning(
-    orgId,
-    document,
-    signerIndex,
-    signingType
-  );
+  const pdfBytes =
+    basePdfBytes ??
+    (await loadPdfForSigning(orgId, document, signerIndex, signingType));
   const signedPdfBytes = await embedSignature(
     pdfBytes,
     signaturePng,

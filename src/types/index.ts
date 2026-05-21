@@ -77,6 +77,9 @@ export interface Document {
   created_at: string;
   signed_at: string | null;
   expires_at: string;
+  template_id?: string | null;
+  recipient_fields_filled?: boolean;
+  recipient_fields_required?: boolean;
 }
 
 export interface Signature {
@@ -172,4 +175,67 @@ export interface SignDocumentResponse {
   p7s_url: string | null;
   message?: string;
   pending_next_signer?: boolean;
+}
+
+// ─── Templates ────────────────────────────────────────────────────────────────
+
+export type TemplateFieldType =
+  | "text"
+  | "number"
+  | "date"
+  | "email"
+  | "phone"
+  | "textarea"
+  | "checkbox"
+  | "select";
+
+export type TemplateFieldAssignee = "sender" | "recipient";
+
+export type TemplateType = "system" | "custom";
+
+export type TemplateCategory =
+  | "rental"
+  | "vehicle"
+  | "services"
+  | "power_of_attorney"
+  | "membership"
+  | "other";
+
+export interface TemplateField {
+  key: string;
+  label: string;
+  field_type: TemplateFieldType;
+  assigned_to: TemplateFieldAssignee;
+  required: boolean;
+  placeholder?: string;
+  options?: string[];
+  order_index: number;
+  section?: string;
+}
+
+export interface Template {
+  id: string;
+  org_id: string | null;
+  name: string;
+  description: string;
+  type: TemplateType;
+  category: TemplateCategory;
+  fields: TemplateField[];
+  html_content?: string;
+  pdf_path?: string;
+  uses_count: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface DocumentFieldValue {
+  id: string;
+  document_id: string;
+  template_id?: string;
+  field_key: string;
+  field_label?: string;
+  value: string;
+  filled_by: TemplateFieldAssignee;
+  filled_at: string;
+  signer_index: number;
 }

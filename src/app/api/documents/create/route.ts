@@ -2,7 +2,12 @@
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { getAppUrl } from "@/lib/app-url";
+import { htmlToPdf } from "@/lib/pdf/html-to-pdf";
 import { createPlaceholderPdf } from "@/lib/pdf/create-placeholder-pdf";
+import {
+  buildFilledTemplateHtml,
+  fetchTemplateForPdf,
+} from "@/lib/templates/prepare-html";
 import { generateQrForToken } from "@/lib/sign/process-signature";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -104,6 +109,21 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const pdfFile = formData.get("pdf");
     const templateId = (formData.get("template_id") as string) || null;
+    const dbTemplateId = (formData.get("db_template_id") as string) || null;
+    const senderFieldValuesRaw = formData.get("sender_field_values") as
+      | string
+      | null;
+    let senderFieldValues: Record<string, string> = {};
+    if (senderFieldValuesRaw) {
+      try {
+        senderFieldValues = JSON.parse(senderFieldValuesRaw) as Record<
+          string,
+          string
+        >;
+      } catch {
+        senderFieldValues = {};
+      }
+    }
     const title = (formData.get("title") as string)?.trim();
     const signingType = parseSigningType(
       (formData.get("signing_type") as string) || null
@@ -174,6 +194,8 @@ export async function POST(request: Request) {
     }
 
     let pdfBytes: Uint8Array | null = null;
+    let storedTemplateId: string | null = null;
+    let recipientFieldsRequired = false;
 
     if (pdfFile instanceof File && pdfFile.size > 0) {
       if (pdfFile.type !== "application/pdf") {
@@ -189,6 +211,23 @@ export async function POST(request: Request) {
         );
       }
       pdfBytes = new Uint8Array(await pdfFile.arrayBuffer());
+    } else if (dbTemplateId) {
+      const template = await fetchTemplateForPdf(dbTemplateId);
+      if (!template) {
+        return NextResponse.json(
+          { error: "Шаблонът не е намерен." },
+          { status: 400 }
+        );
+      }
+      const html = buildFilledTemplateHtml(
+        template.html_content,
+        senderFieldValues
+      );
+      pdfBytes = await htmlToPdf(html);
+      storedTemplateId = dbTemplateId;
+      recipientFieldsRequired = template.fields.some(
+        (f) => f.assigned_to === "recipient"
+      );
     } else if (templateId && templateId !== "custom") {
       pdfBytes = await createPlaceholderPdf(templateId, title);
     } else {
@@ -247,6 +286,9 @@ export async function POST(request: Request) {
       created_at: new Date().toISOString(),
       signed_at: null,
       expires_at: expiresAt,
+      template_id: storedTemplateId,
+      recipient_fields_required: recipientFieldsRequired,
+      recipient_fields_filled: false,
     });
 
     if (insertError) {

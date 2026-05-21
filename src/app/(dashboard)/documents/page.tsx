@@ -2,13 +2,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { IconFileOff, IconPlus } from "@tabler/icons-react";
-import DocumentStatusBadge from "@/components/dashboard/DocumentStatusBadge";
-import DocumentRowActions from "@/components/documents/DocumentRowActions";
-import SigningTypeBadge from "@/components/documents/SigningTypeBadge";
-import { formatSignersSummary, getPendingSignUrl, getSigningType } from "@/lib/sign/signers";
+import DocumentTable from "@/components/documents/DocumentTable";
 import { fetchDocumentsByOrg, getOrgIdForUser } from "@/lib/dashboard/documents-data";
 import { getAppUrl } from "@/lib/app-url";
-import { formatDocumentDateTime } from "@/lib/utils/format-datetime";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -81,61 +77,7 @@ export default async function DocumentsPage({
       {documents.length === 0 ? (
         <DocumentsEmptyState />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-zinc-100 bg-zinc-50/80 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                <th className="px-4 py-3">Заглавие</th>
-                <th className="px-4 py-3">Получател</th>
-                <th className="px-4 py-3">Дата</th>
-                <th className="px-4 py-3">Статус</th>
-                <th className="px-4 py-3 text-right">Действия</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {documents.map((doc) => (
-                <tr key={doc.id} className="hover:bg-zinc-50/50">
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-zinc-900">
-                        {doc.title}
-                      </span>
-                      <SigningTypeBadge document={doc} />
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-zinc-600">
-                    {getSigningType(doc) === "two_sided" ? (
-                      <div className="text-sm">
-                        {formatSignersSummary(doc)}
-                      </div>
-                    ) : (
-                      <>
-                        <div>{doc.recipient_name}</div>
-                        <div className="text-xs text-zinc-400">
-                          {doc.recipient_email}
-                        </div>
-                      </>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-zinc-600">
-                    {formatDocumentDateTime(doc.created_at)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <DocumentStatusBadge status={doc.status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <DocumentRowActions
-                      documentId={doc.id}
-                      status={doc.status}
-                      signingType={getSigningType(doc)}
-                      signUrl={getPendingSignUrl(doc, appUrl)}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DocumentTable documents={documents} appUrl={appUrl} />
       )}
     </div>
   );

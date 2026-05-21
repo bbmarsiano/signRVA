@@ -1,9 +1,13 @@
-// UploadWizard — 4-step document upload, recipient, options, QR & send
+// UploadWizard — document upload, recipient, template fields, options, QR & send
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import SenderFieldsForm from "@/components/documents/SenderFieldsForm";
+import { useWizardSteps, type WizardStepKey } from "@/components/documents/useWizardSteps";
+import { categoryToCreateSlug } from "@/lib/templates/constants";
+import type { SigningOrder, SigningType, Template } from "@/types";
 import {
   IconActivity,
   IconBriefcase,
@@ -20,7 +24,6 @@ import {
   IconUserCheck,
   IconUsers,
 } from "@tabler/icons-react";
-import type { SigningOrder, SigningType } from "@/types";
 
 const PRIMARY = "#0F6E56";
 const TEMPLATE_SELECTED_BG = "#E6F1FB";
@@ -44,13 +47,6 @@ type CreateResult = {
   expires_at: string;
   token: string;
 };
-
-const STEPS = [
-  { n: 1, label: "Документ" },
-  { n: 2, label: "Получател" },
-  { n: 3, label: "Опции" },
-  { n: 4, label: "QR & изпращане" },
-] as const;
 
 const TEMPLATES: {
   id: TemplateId;
@@ -118,10 +114,22 @@ function ToggleRow({
   );
 }
 
-export default function UploadWizard() {
+function UploadWizardInner() {
   const router = useRouter();
-  const [step, setStep] = useState(1);
+  const searchParams = useSearchParams();
+  const urlTemplateId = searchParams.get("template");
+
+  const [stepIndex, setStepIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  const [dbTemplate, setDbTemplate] = useState<Template | null>(null);
+  const [templateLoading, setTemplateLoading] = useState(!!urlTemplateId);
+  const [senderFieldValues, setSenderFieldValues] = useState<
+    Record<string, string>
+  >({});
+  const [senderFieldErrors, setSenderFieldErrors] = useState<
+    Record<string, string>
+  >({});
 
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [templateId, setTemplateId] = useState<TemplateId | null>(null);
@@ -195,11 +203,84 @@ export default function UploadWizard() {
   }, []);
 
   const canProceedStep1 = Boolean(
-    title.trim() && (pdfFile || (templateId && templateId !== "custom"))
-  );
+    title.trim() &&
+      (dbTemplate ||
+        pdfFile ||
+        (templateId && templateId !== "custom"))
+  ) &&
+    !templateLoading;
 
   const isSelfSign = signingType === "self_sign";
   const isTwoSided = signingType === "two_sided";
+
+  const senderFields = useMemo(
+    () =>
+      dbTemplate?.fields.filter((f) => f.assigned_to === "sender") ?? [],
+    [dbTemplate]
+  );
+  const hasSenderFieldsStep = senderFields.length > 0 && !!dbTemplate;
+  const hasRecipientFieldsRequired = useMemo(
+    () =>
+      (dbTemplate?.fields.some((f) => f.assigned_to === "recipient") ??
+        false) && !!dbTemplate,
+    [dbTemplate]
+  );
+
+  const templatePreviewHtml = useMemo(() => {
+    if (!dbTemplate?.html_content) return "";
+    const fieldLabels = (dbTemplate.fields ?? []).reduce(
+      (acc, f) => {
+        acc[f.key] = f.label;
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+    let previewHtml = dbTemplate.html_content;
+    for (const [key, label] of Object.entries(fieldLabels)) {
+      previewHtml = previewHtml.split(`{{${key}}}`).join(
+        `<span style="background:#E1F5EE;color:#085041;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:500">[${label}]</span>`
+      );
+    }
+    return previewHtml;
+  }, [dbTemplate]);
+
+  const wizardSteps = useWizardSteps(isSelfSign, hasSenderFieldsStep);
+  const currentStep: WizardStepKey =
+    wizardSteps[stepIndex]?.key ?? "document";
+  const isQrStep = currentStep === "qr";
+
+  useEffect(() => {
+    if (!urlTemplateId) {
+      setTemplateLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setTemplateLoading(true);
+
+    void fetch(`/api/templates/${urlTemplateId}`)
+      .then((res) => res.json())
+      .then((data: { template?: Template; error?: string }) => {
+        if (cancelled) return;
+        if (data.template) {
+          setDbTemplate(data.template);
+          setTitle((t) => t || data.template!.name);
+          setTemplateId(null);
+        } else {
+          setError(data.error ?? "Шаблонът не е намерен.");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setError("Грешка при зареждане на шаблона.");
+      })
+      .finally(() => {
+        if (!cancelled) setTemplateLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [urlTemplateId]);
 
   const canProceedStep2 =
     isTwoSided
@@ -212,7 +293,15 @@ export default function UploadWizard() {
   const buildFormData = useCallback(() => {
     const fd = new FormData();
     if (pdfFile) fd.append("pdf", pdfFile);
-    if (templateId) fd.append("template_id", templateId);
+    if (dbTemplate) {
+      fd.append("db_template_id", dbTemplate.id);
+      if (Object.keys(senderFieldValues).length > 0) {
+        fd.append("sender_field_values", JSON.stringify(senderFieldValues));
+      }
+      fd.append("template_id", categoryToCreateSlug(dbTemplate.category));
+    } else if (templateId) {
+      fd.append("template_id", templateId);
+    }
     fd.append("title", title.trim());
     fd.append("signing_type", signingType);
     if (isTwoSided) {
@@ -237,6 +326,8 @@ export default function UploadWizard() {
     return fd;
   }, [
     pdfFile,
+    dbTemplate,
+    senderFieldValues,
     templateId,
     title,
     signingType,
@@ -275,32 +366,73 @@ export default function UploadWizard() {
         router.push(result.redirect_url);
         return;
       }
+
+      if (
+        dbTemplate &&
+        result.id &&
+        result.token &&
+        Object.keys(senderFieldValues).length > 0
+      ) {
+        try {
+          await fetch(`/api/documents/${result.id}/fill-fields`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              field_values: senderFieldValues,
+              filled_by: "sender",
+              sign_token: result.token,
+              template_id: dbTemplate.id,
+            }),
+          });
+        } catch {
+          console.warn("fill-fields failed (non-blocking)");
+        }
+      }
+
       setCreateResult(result);
     } catch {
       setError("Грешка при връзка със сървъра.");
     } finally {
       setCreating(false);
     }
-  }, [buildFormData, router]);
+  }, [buildFormData, router, dbTemplate, senderFieldValues]);
 
   useEffect(() => {
-    if (step !== 4 || isSelfSign || createStarted.current || createResult) return;
+    if (!isQrStep || isSelfSign || createStarted.current || createResult) return;
     createStarted.current = true;
     void createDocument();
-  }, [step, createDocument, createResult, isSelfSign]);
+  }, [isQrStep, createDocument, createResult, isSelfSign]);
+
+  function validateSenderFields(): boolean {
+    const errors: Record<string, string> = {};
+    for (const field of senderFields) {
+      if (field.required) {
+        const val = (senderFieldValues[field.key] ?? "").trim();
+        if (field.field_type === "checkbox") {
+          if (val !== "true" && val !== "1") {
+            errors[field.key] = "Задължително поле.";
+          }
+        } else if (!val) {
+          errors[field.key] = "Задължително поле.";
+        }
+      }
+    }
+    setSenderFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
 
   function validateCurrentStep(): boolean {
     setError(null);
-    if (step === 1) {
+    if (currentStep === "document") {
       if (!title.trim()) {
         setError("Въведете заглавие на документа.");
         return false;
       }
-      if (!pdfFile && !templateId) {
+      if (!dbTemplate && !pdfFile && !templateId) {
         setError("Качете PDF или изберете шаблон.");
         return false;
       }
-      if (templateId === "custom" && !pdfFile) {
+      if (templateId === "custom" && !pdfFile && !dbTemplate) {
         setError(
           "За подписване е необходим PDF. DOCX шаблонът ще бъде поддържан скоро — качете PDF."
         );
@@ -308,7 +440,10 @@ export default function UploadWizard() {
       }
       return true;
     }
-    if (step === 2 && !isSelfSign) {
+    if (currentStep === "sender_fields") {
+      return validateSenderFields();
+    }
+    if (currentStep === "recipient" && !isSelfSign) {
       if (!recipientName.trim()) {
         setError(isTwoSided ? "Въведете име на Страна 1." : "Въведете име на получателя.");
         return false;
@@ -334,25 +469,25 @@ export default function UploadWizard() {
 
   function goNext() {
     if (!validateCurrentStep()) return;
-    if (step === 1 && isSelfSign) {
-      setStep(3);
-      return;
-    }
-    if (step === 3 && isSelfSign) {
+    if (currentStep === "options" && isSelfSign) {
       void createDocument();
       return;
     }
-    setStep((s) => Math.min(4, s + 1));
+    setStepIndex((i) => Math.min(wizardSteps.length - 1, i + 1));
   }
 
   function goBack() {
     setError(null);
-    if (step === 3 && isSelfSign) {
-      setStep(1);
-      return;
-    }
-    setStep((s) => Math.max(1, s - 1));
+    setStepIndex((i) => Math.max(0, i - 1));
   }
+
+  const showNav =
+    stepIndex < wizardSteps.length - 1 ||
+    (currentStep === "options" && isSelfSign);
+  const navDisabledNext =
+    creating ||
+    (currentStep === "document" && !canProceedStep1) ||
+    (currentStep === "recipient" && !canProceedStep2);
 
   async function handleCopyLink() {
     if (!createResult?.sign_url) return;
@@ -413,11 +548,11 @@ export default function UploadWizard() {
     <div className="mx-auto max-w-4xl space-y-6">
       {/* Steps bar */}
       <div className="flex items-center gap-2">
-        {STEPS.map((s, i) => {
-          const done = step > s.n;
-          const active = step === s.n;
+        {wizardSteps.map((s, i) => {
+          const done = stepIndex > i;
+          const active = stepIndex === i;
           return (
-            <div key={s.n} className="flex flex-1 items-center gap-2">
+            <div key={s.key} className="flex flex-1 items-center gap-2">
               <div className="flex flex-1 flex-col items-center gap-1">
                 <div
                   className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${
@@ -428,7 +563,7 @@ export default function UploadWizard() {
                         : "border border-zinc-300 text-zinc-400"
                   }`}
                 >
-                  {done ? <IconCheck size={16} /> : s.n}
+                  {done ? <IconCheck size={16} /> : i + 1}
                 </div>
                 <span
                   className={`text-center text-[11px] font-medium ${
@@ -438,7 +573,7 @@ export default function UploadWizard() {
                   {s.label}
                 </span>
               </div>
-              {i < STEPS.length - 1 && (
+              {i < wizardSteps.length - 1 && (
                 <div
                   className={`mb-5 h-px flex-1 ${done ? "bg-[#0F6E56]" : "bg-zinc-200"}`}
                 />
@@ -455,10 +590,52 @@ export default function UploadWizard() {
           </p>
         )}
 
-        {/* STEP 1 */}
-        {step === 1 && (
+        {/* STEP: document */}
+        {currentStep === "document" && (
           <div className="space-y-6">
             <h2 className="text-lg font-semibold text-zinc-900">Документ</h2>
+
+            {templateLoading && (
+              <div className="flex items-center gap-2 text-sm text-zinc-500">
+                <IconLoader2 size={18} className="animate-spin text-[#0F6E56]" />
+                Зареждане на шаблон...
+              </div>
+            )}
+
+            {dbTemplate && !templateLoading && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 rounded-xl border border-[#0F6E56]/30 bg-[#E1F5EE]/50 px-4 py-3">
+                  <IconCheck size={22} className="text-[#0F6E56]" />
+                  <div>
+                    <p className="text-sm font-medium text-zinc-900">
+                      Шаблон: {dbTemplate.name}
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      {dbTemplate.description}
+                    </p>
+                  </div>
+                </div>
+                {dbTemplate.html_content && (
+                  <div className="overflow-hidden rounded-lg border border-zinc-200">
+                    <p className="border-b border-zinc-100 bg-zinc-50 px-3 py-2 text-xs font-medium text-zinc-500">
+                      Преглед на шаблона
+                    </p>
+                    <div
+                      className="max-h-[300px] overflow-y-auto bg-white px-4 py-3 text-sm leading-relaxed text-zinc-800"
+                      dangerouslySetInnerHTML={{ __html: templatePreviewHtml }}
+                    />
+                    <p className="border-t border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
+                      Полетата в зелено ще бъдат попълнени преди подписването.
+                    </p>
+                  </div>
+                )}
+                {hasRecipientFieldsRequired && (
+                  <p className="text-xs text-zinc-500">
+                    Получателят ще попълни допълнителни полета при подписване.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div>
               <p className="mb-3 text-sm font-medium text-zinc-700">
@@ -526,7 +703,7 @@ export default function UploadWizard() {
               }}
             />
 
-            {!pdfFile ? (
+            {!dbTemplate && !pdfFile ? (
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -556,16 +733,16 @@ export default function UploadWizard() {
                 </p>
                 <p className="mt-1 text-xs text-zinc-400">Максимум 20 MB</p>
               </div>
-            ) : (
+            ) : !dbTemplate ? (
               <div className="flex items-center justify-between rounded-xl border border-[#0F6E56]/30 bg-[#E1F5EE]/50 px-4 py-3">
                 <div className="flex items-center gap-3">
                   <IconCheck size={22} className="text-[#0F6E56]" />
                   <div>
                     <p className="text-sm font-medium text-zinc-900">
-                      {pdfFile.name}
+                      {pdfFile?.name}
                     </p>
                     <p className="text-xs text-zinc-500">
-                      {formatBytes(pdfFile.size)}
+                      {pdfFile ? formatBytes(pdfFile.size) : ""}
                     </p>
                   </div>
                 </div>
@@ -577,8 +754,9 @@ export default function UploadWizard() {
                   Смени файла
                 </button>
               </div>
-            )}
+            ) : null}
 
+            {!dbTemplate && (
             <div>
               <p className="mb-3 text-sm font-medium text-zinc-700">
                 Или изберете шаблон
@@ -622,8 +800,9 @@ export default function UploadWizard() {
                 })}
               </div>
             </div>
+            )}
 
-            {templateId === "custom" && (
+            {templateId === "custom" && !dbTemplate && (
               <div>
                 <input
                   ref={docxInputRef}
@@ -691,8 +870,33 @@ export default function UploadWizard() {
           </div>
         )}
 
-        {/* STEP 2 */}
-        {step === 2 && !isSelfSign && (
+        {/* STEP: sender fields */}
+        {currentStep === "sender_fields" && dbTemplate && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-zinc-900">
+              Попълни данни
+            </h2>
+            <p className="text-sm text-zinc-500">
+              Попълнете полетата от шаблона „{dbTemplate.name}“ преди изпращане.
+            </p>
+            <SenderFieldsForm
+              fields={senderFields}
+              values={senderFieldValues}
+              errors={senderFieldErrors}
+              onChange={(key, value) => {
+                setSenderFieldValues((prev) => ({ ...prev, [key]: value }));
+                setSenderFieldErrors((prev) => {
+                  const next = { ...prev };
+                  delete next[key];
+                  return next;
+                });
+              }}
+            />
+          </div>
+        )}
+
+        {/* STEP: recipient */}
+        {currentStep === "recipient" && !isSelfSign && (
           <div className="grid gap-8 lg:grid-cols-2">
             <div className="space-y-4">
               <h2 className="text-lg font-semibold text-zinc-900">
@@ -906,8 +1110,8 @@ export default function UploadWizard() {
           </div>
         )}
 
-        {/* STEP 3 */}
-        {step === 3 && (
+        {/* STEP: options */}
+        {currentStep === "options" && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-zinc-900">Опции</h2>
 
@@ -950,8 +1154,8 @@ export default function UploadWizard() {
           </div>
         )}
 
-        {/* STEP 4 */}
-        {step === 4 && (
+        {/* STEP: QR */}
+        {currentStep === "qr" && (
           <div className="space-y-6">
             <h2 className="text-lg font-semibold text-zinc-900">
               QR & изпращане
@@ -1068,12 +1272,12 @@ export default function UploadWizard() {
         )}
 
         {/* Navigation */}
-        {(step < 4 || (step === 3 && isSelfSign)) && (
+        {showNav && (
           <div className="mt-8 flex items-center justify-between border-t border-zinc-100 pt-6">
             <button
               type="button"
               onClick={goBack}
-              disabled={step === 1}
+              disabled={stepIndex === 0}
               className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Назад
@@ -1081,15 +1285,11 @@ export default function UploadWizard() {
             <button
               type="button"
               onClick={goNext}
-              disabled={
-                creating ||
-                (step === 1 && !canProceedStep1) ||
-                (step === 2 && !canProceedStep2)
-              }
+              disabled={navDisabledNext}
               className="rounded-lg px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               style={{ backgroundColor: PRIMARY }}
             >
-              {step === 3 && isSelfSign
+              {currentStep === "options" && isSelfSign
                 ? creating
                   ? "Подготовка..."
                   : "Към подписване"
@@ -1098,7 +1298,7 @@ export default function UploadWizard() {
           </div>
         )}
 
-        {step === 4 && (
+        {currentStep === "qr" && (
           <div className="mt-6 border-t border-zinc-100 pt-4">
             <Link
               href="/documents"
@@ -1110,5 +1310,20 @@ export default function UploadWizard() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function UploadWizard() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-12 text-sm text-zinc-500">
+          <IconLoader2 size={24} className="mr-2 animate-spin text-[#0F6E56]" />
+          Зареждане...
+        </div>
+      }
+    >
+      <UploadWizardInner />
+    </Suspense>
   );
 }
