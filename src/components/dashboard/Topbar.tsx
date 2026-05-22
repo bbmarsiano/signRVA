@@ -6,7 +6,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { IconBell, IconLogout } from "@tabler/icons-react";
 import { createClient } from "@/lib/supabase/client";
-import type { User } from "@/types";
+import type { Organization, PlanId, User } from "@/types";
+
+const PRIMARY = "#0F6E56";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Dashboard",
@@ -16,7 +18,14 @@ const PAGE_TITLES: Record<string, string> = {
   "/team": "Екип",
   "/api-keys": "API & интеграции",
   "/billing": "Абонамент",
+  "/profile": "Профил",
   "/audit": "Audit log",
+};
+
+const PLAN_LABELS: Record<PlanId, string> = {
+  free: "Безплатен",
+  small: "Малък бизнес",
+  business: "Бизнес",
 };
 
 function getPageTitle(pathname: string): string {
@@ -39,11 +48,18 @@ function getInitials(email: string): string {
   return local.slice(0, 2).toUpperCase();
 }
 
-export default function Topbar({ user }: { user: User }) {
+export default function Topbar({
+  user,
+  organization,
+}: {
+  user: User;
+  organization: Organization;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const title = getPageTitle(pathname);
   const initials = getInitials(user.email);
+  const planLabel = PLAN_LABELS[organization.plan] ?? organization.plan;
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -61,8 +77,8 @@ export default function Topbar({ user }: { user: User }) {
       }
     }
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
   }, [menuOpen]);
 
   async function handleLogout() {
@@ -91,7 +107,7 @@ export default function Topbar({ user }: { user: User }) {
             type="button"
             onClick={() => setMenuOpen((open) => !open)}
             className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold text-white transition-opacity hover:opacity-90"
-            style={{ backgroundColor: "#0F6E56" }}
+            style={{ backgroundColor: PRIMARY }}
             aria-label="Меню на потребителя"
             aria-expanded={menuOpen}
           >
@@ -103,12 +119,28 @@ export default function Topbar({ user }: { user: User }) {
               <p className="truncate px-3 py-2 text-xs text-zinc-400">
                 {user.email}
               </p>
+              <p className="px-3 pb-2">
+                <span
+                  className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
+                  style={{ backgroundColor: PRIMARY }}
+                >
+                  {planLabel}
+                </span>
+              </p>
+              <div className="my-1 border-t border-zinc-100" />
+              <Link
+                href="/profile"
+                onClick={() => setMenuOpen(false)}
+                className="block px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
+              >
+                Профил
+              </Link>
               <Link
                 href="/billing"
                 onClick={() => setMenuOpen(false)}
                 className="block px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
               >
-                Профил & настройки
+                Абонамент
               </Link>
               <div className="my-1 border-t border-zinc-100" />
               <button

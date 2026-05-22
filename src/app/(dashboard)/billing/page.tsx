@@ -6,45 +6,11 @@ import BillingClient, {
   type BillingProfile,
   type BillingSubscription,
 } from "@/components/billing/BillingClient";
+import { generateMockInvoices } from "@/lib/billing/mock-invoices";
 import { getDashboardSession } from "@/lib/dashboard/session";
 import { getBillingExtras } from "@/lib/stripe/billing-data";
 import { STRIPE_MOCK_MODE } from "@/lib/stripe/plans";
-import { createClient } from "@/lib/supabase/server";
-
-const mockSubscription: BillingSubscription = {
-  status: "active",
-  current_period_end: new Date(
-    Date.now() + 30 * 24 * 60 * 60 * 1000
-  ).toISOString(),
-  cancel_at_period_end: false,
-};
-
-const mockInvoices: BillingInvoiceRow[] = [
-  {
-    id: "mock_inv_001",
-    date: "2026-05-22",
-    amount: "€4.90",
-    status: "paid",
-    statusLabel: "Платена",
-    pdfUrl: null,
-  },
-  {
-    id: "mock_inv_002",
-    date: "2026-04-22",
-    amount: "€4.90",
-    status: "paid",
-    statusLabel: "Платена",
-    pdfUrl: null,
-  },
-  {
-    id: "mock_inv_003",
-    date: "2026-03-22",
-    amount: "€4.90",
-    status: "paid",
-    statusLabel: "Платена",
-    pdfUrl: null,
-  },
-];
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 const mockPaymentMethod: BillingPaymentMethod = {
   brand: "visa",
@@ -52,6 +18,21 @@ const mockPaymentMethod: BillingPaymentMethod = {
   exp_month: 12,
   exp_year: 2027,
 };
+
+function mockInvoicesToRows(
+  plan: import("@/types").PlanId
+): BillingInvoiceRow[] {
+  return generateMockInvoices(plan, 6).map((inv) => ({
+    id: inv.id,
+    number: inv.number,
+    period: inv.period,
+    date: inv.date,
+    amount: inv.amountLabel,
+    status: "paid" as const,
+    statusLabel: inv.statusLabel,
+    pdfUrl: null,
+  }));
+}
 
 export default async function BillingPage({
   searchParams,
@@ -64,16 +45,15 @@ export default async function BillingPage({
   const { organization } = session;
   const params = await searchParams;
 
-  const supabase = await createClient();
-  const { count: usersCount } = await supabase
+  const { count: usersCount } = await supabaseAdmin
     .from("users")
     .select("*", { count: "exact", head: true })
     .eq("org_id", organization.id);
 
-  const { data: orgBilling } = await supabase
+  const { data: orgBilling } = await supabaseAdmin
     .from("organizations")
     .select(
-      "billing_name, billing_eik, billing_address, billing_vat, stripe_customer_id"
+      "billing_name, billing_eik, billing_address, billing_vat, stripe_customer_id, plan"
     )
     .eq("id", organization.id)
     .single();
@@ -85,13 +65,22 @@ export default async function BillingPage({
     billing_vat: orgBilling?.billing_vat ?? null,
   };
 
+  const effectivePlan = orgBilling?.plan ?? organization.plan;
+
   let subscription: BillingSubscription | null = null;
   let invoices: BillingInvoiceRow[] = [];
   let paymentMethod: BillingPaymentMethod | null = null;
 
   if (STRIPE_MOCK_MODE) {
-    subscription = mockSubscription;
-    invoices = mockInvoices;
+    subscription = {
+      status: "active",
+      current_period_end: new Date(
+        Date.now() + 30 * 24 * 60 * 60 * 1000
+      ).toISOString(),
+      cancel_at_period_end: false,
+      interval: "monthly",
+    };
+    invoices = mockInvoicesToRows(effectivePlan);
     paymentMethod = mockPaymentMethod;
   } else if (
     organization.stripe_customer_id &&
@@ -106,10 +95,17 @@ export default async function BillingPage({
           cancel_at_period_end: false,
         };
       }
-      invoices = extras.invoices;
+      invoices = extras.invoices.map((inv) => ({
+        ...inv,
+        number: inv.id,
+        period: inv.date,
+      }));
     } catch {
-      // Stripe unavailable
+      // Stripe unavailable — fall back to mock invoices for demo
+      invoices = mockInvoicesToRows(effectivePlan);
     }
+  } else {
+    invoices = mockInvoicesToRows(effectivePlan);
   }
 
   return (
@@ -128,7 +124,10 @@ export default async function BillingPage({
       </div>
 
       <BillingClient
-        organization={organization}
+        organization={{
+          ...organization,
+          plan: effectivePlan,
+        }}
         usersCount={usersCount ?? 0}
         subscription={subscription}
         invoices={invoices}

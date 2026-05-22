@@ -2,31 +2,34 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { IconCreditCard, IconLoader2 } from "@tabler/icons-react";
+import {
+  IconCheck,
+  IconCreditCard,
+  IconLoader2,
+  IconLock,
+  IconX,
+} from "@tabler/icons-react";
 import { useToast } from "@/components/ui/Toast";
 import {
-  PLANS,
-  PLAN_FEATURES,
-  yearlySavingsEur,
-} from "@/lib/stripe/plans";
+  BILLING_PLANS,
+  planAction,
+} from "@/lib/billing/plan-display";
+import { yearlySavingsEur } from "@/lib/stripe/plans";
 import type { Organization, PlanId } from "@/types";
 
 const PRIMARY = "#0F6E56";
-
-const planNames: Record<PlanId, string> = {
-  free: "Безплатен",
-  small: "Малък бизнес",
-  business: "Бизнес",
-};
 
 export type BillingSubscription = {
   status: string;
   current_period_end: string;
   cancel_at_period_end: boolean;
+  interval?: "monthly" | "yearly";
 };
 
 export type BillingInvoiceRow = {
   id: string;
+  number: string;
+  period: string;
   date: string;
   amount: string;
   status: "paid" | "failed" | "other";
@@ -72,11 +75,12 @@ export default function BillingClient({
   const { addToast } = useToast();
   const [mounted, setMounted] = useState(false);
   const [tab, setTab] = useState<TabId>("plans");
-  const [yearly, setYearly] = useState(false);
+  const [yearly, setYearly] = useState(
+    subscription?.interval === "yearly"
+  );
   const [checkoutLoading, setCheckoutLoading] = useState<PlanId | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
-  const [profileMessage, setProfileMessage] = useState<string | null>(null);
   const [profile, setProfile] = useState(billingProfile);
 
   const [showMockModal, setShowMockModal] = useState(false);
@@ -88,7 +92,7 @@ export default function BillingClient({
     setMounted(true);
   }, []);
 
-  const currentPlan = PLANS[organization.plan];
+  const currentPlan = BILLING_PLANS[organization.plan];
   const docsLimitLabel =
     organization.documents_limit < 0
       ? "∞"
@@ -99,11 +103,17 @@ export default function BillingClient({
           100,
           (organization.documents_used / organization.documents_limit) * 100
         )
-      : 0;
+      : organization.documents_limit < 0
+        ? Math.min(100, organization.documents_used > 0 ? 8 : 0)
+        : 0;
   const usersPercent =
-    currentPlan.users_limit > 0
-      ? Math.min(100, (usersCount / currentPlan.users_limit) * 100)
+    currentPlan.usersLimit > 0
+      ? Math.min(100, (usersCount / currentPlan.usersLimit) * 100)
       : 0;
+
+  const nextBillingDate =
+    subscription?.current_period_end ??
+    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "plans", label: "Планове" },
@@ -112,6 +122,7 @@ export default function BillingClient({
   ];
 
   function handleUpgrade(targetPlan: PlanId) {
+    if (planAction(organization.plan, targetPlan) === "current") return;
     if (isMockMode) {
       setUpgradingPlan(targetPlan);
       setShowMockModal(true);
@@ -164,7 +175,6 @@ export default function BillingClient({
   async function saveProfile(e: React.FormEvent) {
     e.preventDefault();
     setProfileSaving(true);
-    setProfileMessage(null);
     try {
       const res = await fetch("/api/billing/profile", {
         method: "PATCH",
@@ -172,7 +182,13 @@ export default function BillingClient({
         body: JSON.stringify(profile),
       });
       const data = await res.json();
-      setProfileMessage(res.ok ? "Запазено успешно." : data.error);
+      if (!res.ok) {
+        addToast(data.error ?? "Грешка при запазване", "error");
+        return;
+      }
+      addToast("Данните за фактуриране са запазени", "success");
+    } catch {
+      addToast("Грешка при връзка със сървъра", "error");
     } finally {
       setProfileSaving(false);
     }
@@ -184,62 +200,19 @@ export default function BillingClient({
 
   if (showMockModal) {
     return (
-      <div style={{ minHeight: "500px", position: "relative" }}>
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 50,
-            borderRadius: "var(--border-radius-lg, 12px)",
-          }}
-        >
-          <div
-            style={{
-              background: "var(--color-background-primary, #fff)",
-              borderRadius: "var(--border-radius-lg, 12px)",
-              padding: "28px",
-              width: "380px",
-              maxWidth: "90%",
-              border: "0.5px solid var(--color-border-tertiary, #e4e4e7)",
-            }}
-          >
-            <div
-              style={{
-                background: "#FAEEDA",
-                color: "#633806",
-                borderRadius: "var(--border-radius-md, 8px)",
-                padding: "10px 14px",
-                fontSize: "12.5px",
-                marginBottom: "16px",
-              }}
-            >
+      <div className="relative min-h-[500px]">
+        <div className="absolute inset-0 z-50 flex items-center justify-center rounded-xl bg-black/45">
+          <div className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-7 shadow-xl">
+            <div className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
               Mockup режим — Stripe не е свързан. Само за тестване.
             </div>
-
-            <h3
-              style={{
-                fontSize: "15px",
-                fontWeight: 500,
-                marginBottom: "6px",
-                color: "#18181b",
-              }}
-            >
+            <h3 className="text-base font-semibold text-zinc-900">
               Симулатор на план
             </h3>
-            <p
-              style={{
-                fontSize: "12.5px",
-                color: "var(--color-text-secondary, #71717a)",
-                marginBottom: "16px",
-              }}
-            >
-              Избрали сте: <strong>{planNames[upgradingPlan]}</strong>
+            <p className="mt-1 text-sm text-zinc-500">
+              Избрали сте:{" "}
+              <strong>{BILLING_PLANS[upgradingPlan].name}</strong>
             </p>
-
             <button
               type="button"
               onClick={async () => {
@@ -252,62 +225,41 @@ export default function BillingClient({
                   });
                   const data = await res.json();
                   if (data.success) {
-                    const planLabel =
-                      (data.plan_name as string) ?? planNames[upgradingPlan];
                     addToast(
-                      `Планът е сменен на ${planLabel} успешно`,
+                      `Планът е сменен на ${BILLING_PLANS[upgradingPlan].name} успешно`,
                       "success"
                     );
                     setMockSuccess(true);
                     setTimeout(() => window.location.reload(), 1200);
                   } else {
-                    addToast(data.error ?? "Грешка при смяна на плана", "error");
+                    addToast(
+                      data.error ?? "Грешка при смяна на плана",
+                      "error"
+                    );
                   }
-                } catch (e) {
-                  console.error(e);
+                } catch {
                   addToast("Грешка при смяна на плана", "error");
                 } finally {
                   setMockUpgrading(false);
                 }
               }}
               disabled={mockUpgrading || mockSuccess}
-              style={{
-                width: "100%",
-                background: PRIMARY,
-                color: "#fff",
-                border: "none",
-                padding: "10px",
-                borderRadius: "var(--border-radius-md, 8px)",
-                fontSize: "13px",
-                fontWeight: 500,
-                cursor: mockUpgrading || mockSuccess ? "default" : "pointer",
-                marginBottom: "8px",
-                opacity: mockUpgrading ? 0.7 : 1,
-              }}
+              className="mt-4 w-full rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+              style={{ backgroundColor: PRIMARY }}
             >
               {mockSuccess
                 ? "Активирано! Зарежда..."
                 : mockUpgrading
                   ? "Активиране..."
-                  : `Активирай ${planNames[upgradingPlan]}`}
+                  : `Активирай ${BILLING_PLANS[upgradingPlan].name}`}
             </button>
-
             <button
               type="button"
               onClick={() => {
                 setShowMockModal(false);
                 setMockSuccess(false);
               }}
-              style={{
-                width: "100%",
-                background: "none",
-                border: "0.5px solid var(--color-border-tertiary, #e4e4e7)",
-                padding: "9px",
-                borderRadius: "var(--border-radius-md, 8px)",
-                fontSize: "13px",
-                cursor: "pointer",
-                color: "var(--color-text-secondary, #71717a)",
-              }}
+              className="mt-2 w-full rounded-lg border border-zinc-300 py-2 text-sm text-zinc-600 hover:bg-zinc-50"
             >
               Затвори
             </button>
@@ -321,7 +273,7 @@ export default function BillingClient({
     <div className="space-y-6">
       {isMockMode && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Mockup режим — Stripe не е свързан
+          Mockup режим — Stripe не е свързан. Данните са симулирани за демо.
         </div>
       )}
 
@@ -354,17 +306,25 @@ export default function BillingClient({
                   className="mt-2 inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
                   style={{ backgroundColor: PRIMARY }}
                 >
-                  Активен
+                  Активен план
                 </span>
-                {subscription?.current_period_end && (
-                  <p className="mt-2 text-sm text-zinc-600">
-                    Следващо плащане:{" "}
-                    {new Intl.DateTimeFormat("bg-BG", {
-                      dateStyle: "long",
-                    }).format(new Date(subscription.current_period_end))}
-                  </p>
+                {yearly && organization.plan !== "free" && (
+                  <span className="ml-2 inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                    Годишен абонамент
+                  </span>
                 )}
+                <p className="mt-2 text-sm text-zinc-600">
+                  Следващо плащане:{" "}
+                  {new Intl.DateTimeFormat("bg-BG", {
+                    dateStyle: "long",
+                  }).format(new Date(nextBillingDate))}
+                </p>
               </div>
+              {organization.plan === "business" && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#E1F5EE] px-3 py-1 text-xs font-semibold text-[#085041]">
+                  API достъп
+                </span>
+              )}
             </div>
             <div className="mt-6 grid gap-6 sm:grid-cols-2">
               <div>
@@ -376,7 +336,7 @@ export default function BillingClient({
                 </div>
                 <div className="mt-2 h-2 rounded-full bg-zinc-100">
                   <div
-                    className="h-full rounded-full"
+                    className="h-full rounded-full transition-all"
                     style={{
                       width: `${docsPercent}%`,
                       backgroundColor: PRIMARY,
@@ -388,12 +348,12 @@ export default function BillingClient({
                 <div className="flex justify-between text-sm">
                   <span className="text-zinc-600">Потребители</span>
                   <span className="font-medium">
-                    {usersCount} / {currentPlan.users_limit}
+                    {usersCount} / {currentPlan.usersLimit}
                   </span>
                 </div>
                 <div className="mt-2 h-2 rounded-full bg-zinc-100">
                   <div
-                    className="h-full rounded-full bg-[#0F6E56]/70"
+                    className="h-full rounded-full bg-[#0F6E56]/70 transition-all"
                     style={{ width: `${usersPercent}%` }}
                   />
                 </div>
@@ -427,74 +387,149 @@ export default function BillingClient({
             </span>
           </div>
 
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+            <div className="grid grid-cols-4 gap-2 border-b border-zinc-100 bg-zinc-50 px-4 py-3 text-xs font-medium text-zinc-500">
+              <span className="col-span-1" />
+              {(["free", "small", "business"] as PlanId[]).map((id) => (
+                <span key={id} className="text-center">
+                  {BILLING_PLANS[id].name}
+                </span>
+              ))}
+            </div>
+            <div className="grid grid-cols-4 gap-2 px-4 py-3 text-sm">
+              <span className="flex items-center gap-1 text-zinc-600">
+                API & ERP интеграции
+              </span>
+              {(["free", "small", "business"] as PlanId[]).map((id) => (
+                <span key={id} className="flex justify-center">
+                  {BILLING_PLANS[id].apiAccess ? (
+                    <IconCheck size={18} className="text-emerald-600" />
+                  ) : (
+                    <IconLock size={18} className="text-zinc-300" />
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+
           <div className="grid gap-4 md:grid-cols-3">
             {(["free", "small", "business"] as PlanId[]).map((planId) => {
-              const plan = PLANS[planId];
+              const plan = BILLING_PLANS[planId];
               const isCurrent = organization.plan === planId;
+              const action = planAction(organization.plan, planId);
               const price =
                 planId === "free"
                   ? "€0"
                   : yearly
-                    ? `€${plan.price_yearly}/год`
-                    : `€${plan.price_monthly}/мес`;
+                    ? `€${plan.yearlyPrice}/год`
+                    : `€${plan.monthlyPrice}/мес`;
               const savings =
                 planId !== "free" && yearly
                   ? yearlySavingsEur(planId as "small" | "business")
                   : 0;
-              const order: Record<PlanId, number> = {
-                free: 0,
-                small: 1,
-                business: 2,
-              };
-              const actionLabel =
-                order[planId] > order[organization.plan]
-                  ? "Надгради"
-                  : "Понижи";
 
               return (
                 <div
                   key={planId}
-                  className={`rounded-xl border p-6 ${
+                  className={`flex flex-col rounded-xl border-2 p-6 shadow-sm ${
                     isCurrent
-                      ? "border-[#0F6E56] bg-[#E1F5EE]/30"
+                      ? "border-[#0F6E56] bg-[#E1F5EE]/20"
                       : "border-zinc-200 bg-white"
-                  } shadow-sm`}
+                  }`}
                 >
-                  <h4 className="text-lg font-semibold text-zinc-900">
-                    {plan.name}
-                  </h4>
+                  <div className="flex items-start justify-between gap-2">
+                    <h4 className="text-lg font-semibold text-zinc-900">
+                      {plan.name}
+                    </h4>
+                    {isCurrent && (
+                      <span
+                        className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase text-white"
+                        style={{ backgroundColor: PRIMARY }}
+                      >
+                        Текущ план
+                      </span>
+                    )}
+                  </div>
                   <p className="mt-2 text-2xl font-bold text-zinc-900">
                     {price}
                   </p>
                   {savings > 0 && (
-                    <p className="text-xs text-emerald-600">
+                    <p className="text-xs font-medium text-emerald-600">
                       Спестявате €{savings}/год
                     </p>
                   )}
-                  <ul className="mt-4 space-y-1.5 text-sm text-zinc-600">
-                    {PLAN_FEATURES[planId].map((f) => (
-                      <li key={f}>✓ {f}</li>
+                  {plan.apiAccess && (
+                    <span className="mt-2 inline-flex w-fit items-center gap-1 rounded-full bg-[#E1F5EE] px-2 py-0.5 text-[10px] font-semibold text-[#085041]">
+                      API достъп
+                    </span>
+                  )}
+                  <ul className="mt-4 flex-1 space-y-1.5 text-sm">
+                    {plan.features.map((f) => (
+                      <li
+                        key={f}
+                        className="flex items-start gap-2 text-zinc-700"
+                      >
+                        <IconCheck
+                          size={16}
+                          className="mt-0.5 shrink-0 text-emerald-600"
+                        />
+                        {f}
+                      </li>
+                    ))}
+                    {plan.missing.map((f) => (
+                      <li
+                        key={f}
+                        className="flex items-start gap-2 text-zinc-400"
+                      >
+                        <IconX size={16} className="mt-0.5 shrink-0" />
+                        {f}
+                      </li>
                     ))}
                   </ul>
-                  {isCurrent ? (
-                    <p className="mt-4 text-center text-sm font-medium text-[#085041]">
-                      Текущ план
-                    </p>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={checkoutLoading === planId}
-                      onClick={() => handleUpgrade(planId)}
-                      className="mt-4 w-full rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-50"
-                      style={{ backgroundColor: PRIMARY }}
-                    >
-                      {checkoutLoading === planId && !isMockMode ? (
-                        <IconLoader2 className="mx-auto animate-spin" size={18} />
-                      ) : (
-                        actionLabel
-                      )}
-                    </button>
-                  )}
+                  <div className="mt-4">
+                    {action === "current" ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="w-full cursor-default rounded-lg border border-[#0F6E56]/30 bg-[#E1F5EE]/50 py-2.5 text-sm font-semibold text-[#085041]"
+                      >
+                        Активен
+                      </button>
+                    ) : action === "upgrade" ? (
+                      <button
+                        type="button"
+                        disabled={checkoutLoading === planId}
+                        onClick={() => handleUpgrade(planId)}
+                        className="w-full rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                        style={{ backgroundColor: PRIMARY }}
+                      >
+                        {checkoutLoading === planId && !isMockMode ? (
+                          <IconLoader2
+                            className="mx-auto animate-spin"
+                            size={18}
+                          />
+                        ) : (
+                          "Надгради"
+                        )}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={checkoutLoading === planId}
+                        onClick={() => handleUpgrade(planId)}
+                        className="w-full rounded-lg border border-zinc-300 bg-white py-2.5 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+                      >
+                        {checkoutLoading === planId && !isMockMode ? (
+                          <IconLoader2
+                            className="mx-auto animate-spin"
+                            size={18}
+                          />
+                        ) : (
+                          "Понижи"
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -507,6 +542,8 @@ export default function BillingClient({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-100 bg-zinc-50 text-left text-zinc-500">
+                <th className="px-6 py-3 font-medium">Номер</th>
+                <th className="px-6 py-3 font-medium">Период</th>
                 <th className="px-6 py-3 font-medium">Дата</th>
                 <th className="px-6 py-3 font-medium">Сума</th>
                 <th className="px-6 py-3 font-medium">Статус</th>
@@ -517,29 +554,25 @@ export default function BillingClient({
               {invoices.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={6}
                     className="px-6 py-8 text-center text-zinc-500"
                   >
-                    Няма фактури
+                    {organization.plan === "free"
+                      ? "Безплатният план няма фактури"
+                      : "Няма фактури"}
                   </td>
                 </tr>
               ) : (
                 invoices.map((inv) => (
                   <tr key={inv.id} className="border-b border-zinc-50">
-                    <td className="px-6 py-3 text-zinc-800">
-                      {new Intl.DateTimeFormat("bg-BG", {
-                        dateStyle: "medium",
-                      }).format(new Date(inv.date))}
+                    <td className="px-6 py-3 font-mono text-xs text-zinc-800">
+                      {inv.number}
                     </td>
-                    <td className="px-6 py-3">{inv.amount}</td>
+                    <td className="px-6 py-3 text-zinc-800">{inv.period}</td>
+                    <td className="px-6 py-3 text-zinc-600">{inv.date}</td>
+                    <td className="px-6 py-3 font-medium">{inv.amount}</td>
                     <td className="px-6 py-3">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                          inv.status === "paid"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-red-100 text-red-800"
-                        }`}
-                      >
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
                         {inv.statusLabel}
                       </span>
                     </td>
@@ -557,11 +590,7 @@ export default function BillingClient({
                         <button
                           type="button"
                           disabled
-                          title={
-                            isMockMode
-                              ? "Недостъпно в mockup режим"
-                              : undefined
-                          }
+                          title="Налично след Stripe интеграция"
                           className="cursor-not-allowed text-zinc-300"
                         >
                           PDF
@@ -588,6 +617,11 @@ export default function BillingClient({
                 <div>
                   <p className="font-medium capitalize text-zinc-900">
                     {paymentMethod.brand} •••• {paymentMethod.last4}
+                    {isMockMode && (
+                      <span className="ml-2 text-xs font-normal text-zinc-400">
+                        (демо)
+                      </span>
+                    )}
                   </p>
                   <p className="text-sm text-zinc-500">
                     Изтича {paymentMethod.exp_month}/
@@ -606,7 +640,7 @@ export default function BillingClient({
               onClick={() => void handlePortal()}
               title={
                 isMockMode
-                  ? "Stripe не е свързан"
+                  ? "Използвайте симулатора на планове"
                   : !hasStripeCustomer
                     ? "Няма Stripe клиент"
                     : undefined
@@ -616,6 +650,11 @@ export default function BillingClient({
             >
               {portalLoading ? "Зареждане..." : "Управление на плащането"}
             </button>
+            {isMockMode && (
+              <p className="mt-2 text-xs text-zinc-500">
+                В mockup режим сменяйте плана от таб „Планове“.
+              </p>
+            )}
           </div>
 
           <form
@@ -667,7 +706,7 @@ export default function BillingClient({
               </div>
               <div className="sm:col-span-2">
                 <label className="text-sm font-medium text-zinc-700">
-                  Адрес
+                  Адрес за фактуриране
                 </label>
                 <input
                   value={profile.billing_address ?? ""}
@@ -681,9 +720,6 @@ export default function BillingClient({
                 />
               </div>
             </div>
-            {profileMessage && (
-              <p className="mt-3 text-sm text-zinc-600">{profileMessage}</p>
-            )}
             <button
               type="submit"
               disabled={profileSaving}

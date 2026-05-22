@@ -85,7 +85,10 @@ export interface Document {
 export interface Signature {
   id: string;
   document_id: string;
+  signer_name?: string | null;
   canvas_data_path: string;
+  canvas_hash: string | null;
+  document_hash: string | null;
   webauthn_credential_id: string | null;
   ip_address: string;
   user_agent: string;

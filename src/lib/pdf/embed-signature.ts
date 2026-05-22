@@ -2,7 +2,9 @@
 import fs from "fs";
 import path from "path";
 import fontkit from "@pdf-lib/fontkit";
+import QRCode from "qrcode";
 import { PDFDocument, rgb, StandardFonts, type PDFFont } from "pdf-lib";
+import { getAppUrl } from "@/lib/app-url";
 
 const UBUNTU_FONT_PATH = path.join(
   process.cwd(),
@@ -11,16 +13,26 @@ const UBUNTU_FONT_PATH = path.join(
   "Ubuntu-Regular.ttf"
 );
 
-const MARGIN = 40;
-const LINE_GRAY = rgb(0.8, 0.8, 0.8);
-const LABEL_GRAY = rgb(0.45, 0.45, 0.45);
+const MARGIN = 50;
+const ZONE_BOTTOM = MARGIN + 55;
+const ZONE_HEIGHT = 130;
 
-const Y_SECTION = MARGIN + 112;
-const Y_PARTY = MARGIN + 102;
-const Y_SIGNED_BY = MARGIN + 80;
-const Y_IP = MARGIN + 90;
-const Y_CANVAS = MARGIN + 20;
-const CANVAS_HEIGHT = 55;
+const GREEN = rgb(0.059, 0.431, 0.337);
+const TEXT_PRIMARY = rgb(0.1, 0.1, 0.1);
+const TEXT_SECONDARY = rgb(0.4, 0.4, 0.4);
+const TEXT_MUTED = rgb(0.45, 0.45, 0.45);
+
+const BRAND_LINE = "Created by sign.runverifiedapp.com";
+const Y_BRAND = ZONE_BOTTOM + 5;
+
+const CANVAS_W = 130;
+const CANVAS_H = 50;
+
+const Y_LABEL = ZONE_BOTTOM + 105;
+const Y_SIGNED_BY = ZONE_BOTTOM + 92;
+const Y_IP = ZONE_BOTTOM + 81;
+const Y_CANVAS = ZONE_BOTTOM + 20;
+const Y_ZONE_TOP = ZONE_BOTTOM + ZONE_HEIGHT;
 
 export type SignerPosition = "single" | "left" | "right";
 
@@ -142,19 +154,14 @@ function textForPdf(text: string, supportsCyrillic: boolean): string {
   return supportsCyrillic ? text : transliterate(text);
 }
 
-type ZoneTextLimits = {
-  name: number;
-  signedLine: number;
-  ipLine: number;
-  party: number;
-  device: number;
-};
-
-function getTextLimits(position: SignerPosition): ZoneTextLimits {
-  if (position === "single") {
-    return { name: 80, signedLine: 80, ipLine: 80, party: 80, device: 80 };
+function zoneLabel(position: SignerPosition): string {
+  if (position === "left") {
+    return "Подпис — Страна 1 / Signature — Party 1";
   }
-  return { name: 35, signedLine: 55, ipLine: 55, party: 25, device: 45 };
+  if (position === "right") {
+    return "Подпис — Страна 2 / Signature — Party 2";
+  }
+  return "Подпис / Signature";
 }
 
 function buildZoneLines(
@@ -162,8 +169,10 @@ function buildZoneLines(
   position: SignerPosition,
   supportsCyrillic: boolean
 ) {
-  const limits = getTextLimits(position);
-  const deviceMax = position === "single" ? 80 : 45;
+  const nameMax = position === "single" ? 80 : 35;
+  const signedMax = position === "single" ? 80 : 55;
+  const deviceMax = 40;
+
   const deviceShort = textForPdf(
     truncateDevice(meta.userAgent || "", deviceMax),
     supportsCyrillic
@@ -171,195 +180,276 @@ function buildZoneLines(
   const { date, time } = formatSignedAt(meta.signedAt);
   const name = fitText(
     textForPdf(meta.recipientName, supportsCyrillic),
-    limits.name
+    nameMax
   );
 
   return {
+    label: fitText(zoneLabel(position), position === "single" ? 48 : 44),
     signedLine: fitText(
       `Signed by: ${name} on ${date} at ${time} UTC`,
-      limits.signedLine
+      signedMax
     ),
-    ipLine: fitText(
-      `IP: ${meta.ip} · Device: ${deviceShort}`,
-      limits.ipLine
-    ),
+    ipLine: fitText(`IP: ${meta.ip} · ${deviceShort}`, signedMax),
   };
 }
 
-function drawTwoSidedChrome(
-  lastPage: ReturnType<PDFDocument["getPages"]>[number],
-  pageWidth: number
+type PageLike = ReturnType<PDFDocument["getPages"]>[number];
+
+function drawRectBorder(
+  page: PageLike,
+  x: number,
+  y: number,
+  width: number,
+  height: number
 ) {
-  const halfX = pageWidth / 2 - 5;
-
-  lastPage.drawLine({
-    start: { x: halfX, y: MARGIN + 5 },
-    end: { x: halfX, y: MARGIN + 100 },
+  const top = y + height;
+  const right = x + width;
+  const borderOpts = {
     thickness: 0.5,
-    color: LINE_GRAY,
-    opacity: 0.5,
+    color: GREEN,
+    opacity: 0.25,
+  };
+
+  page.drawLine({
+    start: { x, y },
+    end: { x: right, y },
+    ...borderOpts,
   });
+  page.drawLine({
+    start: { x: right, y },
+    end: { x: right, y: top },
+    ...borderOpts,
+  });
+  page.drawLine({
+    start: { x: right, y: top },
+    end: { x, y: top },
+    ...borderOpts,
+  });
+  page.drawLine({
+    start: { x, y: top },
+    end: { x, y },
+    ...borderOpts,
+  });
+}
 
-  lastPage.drawLine({
-    start: { x: MARGIN, y: MARGIN + 108 },
-    end: { x: pageWidth - MARGIN, y: MARGIN + 108 },
+function drawZoneBackground(
+  page: PageLike,
+  pageWidth: number,
+  position: SignerPosition
+) {
+  const fill = {
+    y: ZONE_BOTTOM,
+    height: ZONE_HEIGHT,
+    color: GREEN,
+    opacity: 0.06,
+  };
+
+  if (position === "single") {
+    const x = MARGIN - 4;
+    const w = pageWidth - MARGIN * 2 + 8;
+    page.drawRectangle({ x, width: w, ...fill });
+    drawRectBorder(page, x, ZONE_BOTTOM, w, ZONE_HEIGHT);
+    return;
+  }
+
+  const half = pageWidth / 2;
+
+  if (position === "left") {
+    const x = MARGIN - 4;
+    const w = half - MARGIN - 6;
+    page.drawRectangle({ x, width: w, ...fill });
+    drawRectBorder(page, x, ZONE_BOTTOM, w, ZONE_HEIGHT);
+    return;
+  }
+
+  const x = half + 10;
+  const w = pageWidth - MARGIN - x + 4;
+  page.drawRectangle({ x, width: w, ...fill });
+  drawRectBorder(page, x, ZONE_BOTTOM, w, ZONE_HEIGHT);
+}
+
+function drawZoneTopSeparator(
+  page: PageLike,
+  pageWidth: number,
+  position: SignerPosition
+) {
+  const half = pageWidth / 2;
+  const lineOpts = {
     thickness: 0.5,
-    color: LINE_GRAY,
+    color: GREEN,
+    opacity: 0.4,
+  };
+
+  if (position === "single") {
+    page.drawLine({
+      start: { x: MARGIN, y: Y_ZONE_TOP },
+      end: { x: pageWidth - MARGIN, y: Y_ZONE_TOP },
+      ...lineOpts,
+    });
+    return;
+  }
+
+  if (position === "left") {
+    page.drawLine({
+      start: { x: MARGIN, y: Y_ZONE_TOP },
+      end: { x: half - 10, y: Y_ZONE_TOP },
+      ...lineOpts,
+    });
+    return;
+  }
+
+  page.drawLine({
+    start: { x: half + 10, y: Y_ZONE_TOP },
+    end: { x: pageWidth - MARGIN, y: Y_ZONE_TOP },
+    ...lineOpts,
+  });
+}
+
+function drawVerticalDivider(page: PageLike, pageWidth: number) {
+  const half = pageWidth / 2;
+  page.drawLine({
+    start: { x: half, y: ZONE_BOTTOM + 8 },
+    end: { x: half, y: Y_ZONE_TOP - 4 },
+    thickness: 0.5,
+    color: GREEN,
     opacity: 0.3,
   });
 }
 
-function drawHalfZone(
-  lastPage: ReturnType<PDFDocument["getPages"]>[number],
+function drawQrSeparator(page: PageLike, pageWidth: number) {
+  page.drawLine({
+    start: { x: MARGIN, y: ZONE_BOTTOM - 3 },
+    end: { x: pageWidth - MARGIN, y: ZONE_BOTTOM - 3 },
+    thickness: 0.3,
+    color: GREEN,
+    opacity: 0.2,
+  });
+}
+
+function getZoneLayout(pageWidth: number, position: SignerPosition) {
+  const half = pageWidth / 2;
+  const textX = position === "right" ? half + 14 : MARGIN + 5;
+
+  if (position === "single") {
+    return {
+      textX: MARGIN + 5,
+      brandX: MARGIN + 5,
+      canvasX: pageWidth - MARGIN - CANVAS_W - 10,
+    };
+  }
+
+  if (position === "left") {
+    return {
+      textX,
+      brandX: MARGIN + 5,
+      canvasX: MARGIN + 5,
+    };
+  }
+
+  const zoneLeft = half + 10;
+  const zoneWidth = pageWidth - MARGIN - zoneLeft;
+  return {
+    textX,
+    brandX: zoneLeft + 5,
+    canvasX: zoneLeft + zoneWidth - CANVAS_W - 5,
+  };
+}
+
+function drawZoneContent(
+  page: PageLike,
   pageWidth: number,
   pngImage: Awaited<ReturnType<PDFDocument["embedPng"]>>,
   meta: EmbedSignatureMeta,
   font: PDFFont,
   supportsCyrillic: boolean,
-  side: "left" | "right",
-  drawChrome: boolean
+  position: SignerPosition
 ) {
-  const halfWidth = pageWidth / 2;
-  const textX =
-    side === "left" ? MARGIN + 4 : halfWidth + 10;
-  const imageX = textX;
-  const imageWidth = halfWidth - MARGIN - 24;
-  const position: SignerPosition = side;
-
-  if (drawChrome && side === "left") {
-    drawTwoSidedChrome(lastPage, pageWidth);
-    lastPage.drawText(fitText("Подпис — Страна 1", 25), {
-      x: MARGIN + 4,
-      y: Y_SECTION,
-      size: 7,
-      font,
-      color: LABEL_GRAY,
-    });
-    lastPage.drawText(fitText("Подпис — Страна 2", 25), {
-      x: halfWidth + 10,
-      y: Y_SECTION,
-      size: 7,
-      font,
-      color: LABEL_GRAY,
-    });
-  }
-
-  const partyLabel =
-    side === "left"
-      ? fitText("Страна 1 / Party 1", 25)
-      : fitText("Страна 2 / Party 2", 25);
+  const { textX, brandX, canvasX } = getZoneLayout(pageWidth, position);
   const lines = buildZoneLines(meta, position, supportsCyrillic);
 
-  lastPage.drawImage(pngImage, {
-    x: imageX,
-    y: Y_CANVAS,
-    width: imageWidth,
-    height: CANVAS_HEIGHT,
+  drawZoneBackground(page, pageWidth, position);
+  drawZoneTopSeparator(page, pageWidth, position);
+
+  if (position === "left") {
+    drawVerticalDivider(page, pageWidth);
+  }
+
+  page.drawText(lines.label, {
+    x: textX,
+    y: Y_LABEL,
+    size: 7.5,
+    font,
+    color: GREEN,
   });
 
-  lastPage.drawText(lines.ipLine, {
-    x: textX,
-    y: Y_IP,
-    size: 8,
-    font,
-  });
-  lastPage.drawText(lines.signedLine, {
+  page.drawText(lines.signedLine, {
     x: textX,
     y: Y_SIGNED_BY,
     size: 8,
     font,
+    color: TEXT_PRIMARY,
   });
-  lastPage.drawText(partyLabel, {
+
+  page.drawText(lines.ipLine, {
     x: textX,
-    y: Y_PARTY,
+    y: Y_IP,
     size: 7,
     font,
-    color: LABEL_GRAY,
+    color: TEXT_SECONDARY,
   });
 
-  if (side === "right" && !drawChrome) {
-    lastPage.drawText(fitText("Подпис — Страна 2", 25), {
-      x: textX,
-      y: Y_SECTION,
-      size: 7,
-      font,
-      color: LABEL_GRAY,
-    });
-  }
-}
-
-function drawLeftZone(
-  lastPage: ReturnType<PDFDocument["getPages"]>[number],
-  pageWidth: number,
-  pngImage: Awaited<ReturnType<PDFDocument["embedPng"]>>,
-  meta: EmbedSignatureMeta,
-  font: PDFFont,
-  supportsCyrillic: boolean,
-  drawChrome: boolean
-) {
-  drawHalfZone(
-    lastPage,
-    pageWidth,
-    pngImage,
-    meta,
-    font,
-    supportsCyrillic,
-    "left",
-    drawChrome
-  );
-}
-
-function drawRightZone(
-  lastPage: ReturnType<PDFDocument["getPages"]>[number],
-  pageWidth: number,
-  pngImage: Awaited<ReturnType<PDFDocument["embedPng"]>>,
-  meta: EmbedSignatureMeta,
-  font: PDFFont,
-  supportsCyrillic: boolean
-) {
-  drawHalfZone(
-    lastPage,
-    pageWidth,
-    pngImage,
-    meta,
-    font,
-    supportsCyrillic,
-    "right",
-    false
-  );
-}
-
-function drawSingleZone(
-  lastPage: ReturnType<PDFDocument["getPages"]>[number],
-  pageWidth: number,
-  pngImage: Awaited<ReturnType<PDFDocument["embedPng"]>>,
-  meta: EmbedSignatureMeta,
-  font: PDFFont,
-  supportsCyrillic: boolean
-) {
-  const textX = MARGIN;
-  const imageWidth = 160;
-  const imageX = pageWidth - 180 - MARGIN;
-  const lines = buildZoneLines(meta, "single", supportsCyrillic);
-
-  lastPage.drawImage(pngImage, {
-    x: imageX,
+  page.drawImage(pngImage, {
+    x: canvasX,
     y: Y_CANVAS,
-    width: imageWidth,
-    height: CANVAS_HEIGHT,
+    width: CANVAS_W,
+    height: CANVAS_H,
   });
 
-  lastPage.drawText(lines.ipLine, {
-    x: textX,
-    y: Y_IP,
-    size: 8,
+  page.drawText(BRAND_LINE, {
+    x: brandX,
+    y: Y_BRAND,
+    size: 6,
     font,
+    color: GREEN,
   });
-  lastPage.drawText(lines.signedLine, {
-    x: textX,
-    y: Y_SIGNED_BY,
-    size: 8,
+}
+
+async function drawVerificationBlock(
+  pdfDoc: PDFDocument,
+  page: PageLike,
+  documentId: string,
+  font: PDFFont
+) {
+  const { width: pageWidth } = page.getSize();
+  const half = pageWidth / 2;
+
+  drawQrSeparator(page, pageWidth);
+
+  const verifyUrl = `${getAppUrl()}/verify/${documentId}`;
+  const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
+    width: 80,
+    margin: 1,
+  });
+  const qrBase64 = qrDataUrl.replace(/^data:image\/png;base64,/, "");
+  const qrBytes = Buffer.from(qrBase64, "base64");
+  const qrImage = await pdfDoc.embedPng(qrBytes);
+  const qrSize = 40;
+
+  page.drawImage(qrImage, {
+    x: half - 20,
+    y: MARGIN + 8,
+    width: qrSize,
+    height: qrSize,
+  });
+
+  const verifyLabel = "Верифицирай / Verify";
+  const labelWidth = font.widthOfTextAtSize(verifyLabel, 6);
+  page.drawText(verifyLabel, {
+    x: half - labelWidth / 2,
+    y: MARGIN + 4,
+    size: 6,
     font,
+    color: TEXT_MUTED,
   });
 }
 
@@ -367,7 +457,8 @@ export async function embedSignature(
   pdfBytes: Uint8Array,
   signaturePng: Uint8Array,
   meta: EmbedSignatureMeta,
-  position: SignerPosition = "single"
+  position: SignerPosition = "single",
+  documentId?: string
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const { font, supportsCyrillic } = await loadFont(pdfDoc);
@@ -377,15 +468,18 @@ export async function embedSignature(
   const { width: pageWidth } = lastPage.getSize();
   const pngImage = await pdfDoc.embedPng(signaturePng);
 
-  switch (position) {
-    case "left":
-      drawLeftZone(lastPage, pageWidth, pngImage, meta, font, supportsCyrillic, true);
-      break;
-    case "right":
-      drawRightZone(lastPage, pageWidth, pngImage, meta, font, supportsCyrillic);
-      break;
-    default:
-      drawSingleZone(lastPage, pageWidth, pngImage, meta, font, supportsCyrillic);
+  drawZoneContent(
+    lastPage,
+    pageWidth,
+    pngImage,
+    meta,
+    font,
+    supportsCyrillic,
+    position
+  );
+
+  if (documentId) {
+    await drawVerificationBlock(pdfDoc, lastPage, documentId, font);
   }
 
   return pdfDoc.save();
@@ -402,7 +496,8 @@ export type SignatureBlock = {
 /** Embed multiple signatures in left/right zones (e.g. batch finalization). */
 export async function embedMultipleSignatures(
   pdfBytes: Uint8Array,
-  signatures: SignatureBlock[]
+  signatures: SignatureBlock[],
+  documentId?: string
 ): Promise<Uint8Array> {
   if (signatures.length === 0) return pdfBytes;
 
@@ -411,6 +506,7 @@ export async function embedMultipleSignatures(
     const sig = signatures[i];
     const position: SignerPosition =
       signatures.length === 1 ? "single" : i === 0 ? "left" : "right";
+    const isLast = i === signatures.length - 1;
     result = await embedSignature(
       result,
       sig.signaturePng,
@@ -420,7 +516,8 @@ export async function embedMultipleSignatures(
         ip: sig.ip,
         userAgent: sig.userAgent,
       },
-      position
+      position,
+      isLast ? documentId : undefined
     );
   }
   return result;

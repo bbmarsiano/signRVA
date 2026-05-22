@@ -86,6 +86,21 @@ body {
   border-left: 3px solid var(--color-text-warning);
 }
 
+@keyframes verifyCheckPop {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.verify-check-pop {
+  animation: verifyCheckPop 0.35s ease-out forwards;
+}
+
 @keyframes slideIn {
   from {
     transform: translateX(20px);

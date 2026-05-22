@@ -10,6 +10,7 @@ import {
   IconFiles,
   IconHistory,
   IconLayoutDashboard,
+  IconShieldCheck,
   IconTemplate,
   IconUsers,
 } from "@tabler/icons-react";
@@ -129,6 +130,19 @@ export default function Sidebar({
         <NavSection items={MAIN_NAV} pathname={pathname} />
         <NavSection title="Настройки" items={SETTINGS_NAV} pathname={pathname} />
         <NavSection title="Отчети" items={REPORTS_NAV} pathname={pathname} />
+
+        <div className="mt-4 border-t border-zinc-100 pt-3">
+          <Link
+            href="/verify"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-700"
+          >
+            <IconShieldCheck size={18} stroke={1.75} />
+            <span>Верификация</span>
+            <span className="ml-auto text-[10px] text-zinc-400">↗</span>
+          </Link>
+        </div>
       </nav>
 
       <div className="border-t border-zinc-100 p-3">

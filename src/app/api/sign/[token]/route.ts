@@ -94,6 +94,8 @@ export async function POST(
       }
     }
 
+    // Combined .p7s v2.0 (all signers) is built in processDocumentSignature
+    // after each signature and attached to the final email.
     const result = await processDocumentSignature({
       document,
       orgId: organization.id,

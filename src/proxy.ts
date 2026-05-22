@@ -39,7 +39,11 @@ export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Fully public — no Supabase session work
-  if (pathname.startsWith("/api") || pathname.startsWith("/sign")) {
+  if (
+    pathname.startsWith("/api") ||
+    pathname.startsWith("/sign") ||
+    pathname.startsWith("/verify")
+  ) {
     return NextResponse.next({ request });
   }
 

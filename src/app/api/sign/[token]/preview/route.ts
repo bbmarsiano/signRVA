@@ -15,15 +15,26 @@ export async function GET(
   }
 
   const { document } = payload;
-  const storagePath = document.file_path;
+  const signedPath = `${document.org_id}/${document.id}/signed.pdf`;
 
-  const { data, error } = await supabaseAdmin.storage
+  const { data: signedUrl } = await supabaseAdmin.storage
     .from("documents")
-    .createSignedUrl(storagePath, 3600);
+    .createSignedUrl(signedPath, 3600);
 
-  if (error || !data?.signedUrl) {
-    return NextResponse.json({ error: "No PDF" }, { status: 404 });
+  if (signedUrl?.signedUrl) {
+    return NextResponse.redirect(signedUrl.signedUrl);
   }
 
-  return NextResponse.redirect(data.signedUrl);
+  const originalPath =
+    document.file_path ?? `${document.org_id}/${document.id}/original.pdf`;
+
+  const { data: originalUrl } = await supabaseAdmin.storage
+    .from("documents")
+    .createSignedUrl(originalPath, 3600);
+
+  if (originalUrl?.signedUrl) {
+    return NextResponse.redirect(originalUrl.signedUrl);
+  }
+
+  return NextResponse.json({ error: "No PDF found" }, { status: 404 });
 }

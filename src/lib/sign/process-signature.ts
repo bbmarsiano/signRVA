@@ -7,6 +7,10 @@ import {
 } from "@/lib/pdf/embed-signature";
 import { sendSigningInvite, buildSignUrl } from "@/lib/email/send-document";
 import { sendSignedEmails } from "@/lib/email/send-signed";
+import {
+  buildCombinedP7s,
+  COMBINED_P7S_PATH,
+} from "@/lib/sign/combined-p7s";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
   allSignersSigned,
@@ -15,7 +19,7 @@ import {
   getSigningType,
   parseSigners,
 } from "@/lib/sign/signers";
-import type { BiometricType, Document, DocumentSigner } from "@/types";
+import type { BiometricType, Document, DocumentSigner, Signature } from "@/types";
 
 const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -155,14 +159,22 @@ export async function processDocumentSignature(
       ip: ipAddress,
       userAgent,
     },
-    position
+    position,
+    document.id
   );
 
   const canvasPath = `signatures/${document.id}/${signerIndex}/canvas.png`;
   const signedPdfPath = `${orgId}/${document.id}/signed.pdf`;
   const p7sPath = `signatures/${document.id}/${signerIndex}/signature.p7s`;
 
-  const p7sContent = JSON.stringify({
+  const canvasHash = createHash("sha256")
+    .update(canvasDataBase64)
+    .digest("hex");
+  const documentHash = createHash("sha256")
+    .update(signedPdfBytes)
+    .digest("hex");
+
+  const perSignerP7s = {
     version: "1.0",
     type: "attached-signature",
     document_id: document.id,
@@ -171,9 +183,10 @@ export async function processDocumentSignature(
     signed_at: signedAtIso,
     ip_address: ipAddress,
     user_agent: userAgent,
-    canvas_hash: createHash("sha256").update(canvasDataBase64).digest("hex"),
-    document_hash: createHash("sha256").update(signedPdfBytes).digest("hex"),
-  });
+    canvas_hash: canvasHash,
+    document_hash: documentHash,
+  };
+  const p7sContent = JSON.stringify(perSignerP7s);
 
   await supabaseAdmin.storage.from("documents").upload(canvasPath, signaturePng, {
     contentType: "image/png",
@@ -259,7 +272,10 @@ export async function processDocumentSignature(
   await supabaseAdmin.from("signatures").insert({
     id: randomUUID(),
     document_id: document.id,
+    signer_name: signer.name,
     canvas_data_path: canvasPath,
+    canvas_hash: canvasHash,
+    document_hash: documentHash,
     webauthn_credential_id: webauthnCredentialId,
     ip_address: ipAddress,
     user_agent: userAgent,
@@ -269,6 +285,27 @@ export async function processDocumentSignature(
     signed_pdf_path: signedPdfPath,
     timestamp: signedAtIso,
   });
+
+  const { data: allSignatures } = await supabaseAdmin
+    .from("signatures")
+    .select("*")
+    .eq("document_id", document.id)
+    .order("timestamp", { ascending: true });
+
+  const combinedPath = COMBINED_P7S_PATH(document.id);
+  const combinedP7s = buildCombinedP7s(
+    document,
+    (allSignatures ?? []) as Signature[],
+    documentHash
+  );
+  const combinedP7sContent = JSON.stringify(combinedP7s, null, 2);
+
+  await supabaseAdmin.storage
+    .from("documents")
+    .upload(combinedPath, Buffer.from(combinedP7sContent, "utf-8"), {
+      contentType: "application/json",
+      upsert: true,
+    });
 
   await supabaseAdmin.from("audit_log").insert({
     org_id: document.org_id,
@@ -319,7 +356,7 @@ export async function processDocumentSignature(
             title: document.title,
             signedPdfBytes,
             documentId: document.id,
-            p7sPath,
+            combinedP7sContent,
             signedAt: signedAtIso,
             ipAddress,
             notifyOwner: i === 0,
@@ -337,7 +374,10 @@ export async function processDocumentSignature(
 
   const { data: p7sUrlData } = await supabaseAdmin.storage
     .from("documents")
-    .createSignedUrl(p7sPath, SIGNED_URL_TTL_SECONDS);
+    .createSignedUrl(
+      everyoneSigned ? combinedPath : p7sPath,
+      SIGNED_URL_TTL_SECONDS
+    );
 
   const pendingNext =
     !everyoneSigned &&
