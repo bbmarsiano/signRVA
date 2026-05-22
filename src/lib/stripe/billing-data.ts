@@ -16,7 +16,7 @@ export async function getBillingExtras(organization: Organization): Promise<{
   nextBillingDate: string | null;
   invoices: BillingInvoice[];
 }> {
-  if (!organization.stripe_customer_id) {
+  if (!stripe || !organization.stripe_customer_id) {
     return { nextBillingDate: null, invoices: [] };
   }
 

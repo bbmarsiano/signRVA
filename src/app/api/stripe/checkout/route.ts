@@ -3,11 +3,25 @@ import { NextResponse } from "next/server";
 import { getDashboardSession } from "@/lib/dashboard/session";
 import { getAppUrl } from "@/lib/app-url";
 import { stripe } from "@/lib/stripe/client";
-import { getPriceId } from "@/lib/stripe/plans";
+import { getPriceId, STRIPE_MOCK_MODE } from "@/lib/stripe/plans";
 import { createClient } from "@/lib/supabase/server";
 import type { PlanId } from "@/types";
 
 export async function POST(request: Request) {
+  if (STRIPE_MOCK_MODE) {
+    return NextResponse.json(
+      { error: "Stripe не е активиран", mock: true },
+      { status: 503 }
+    );
+  }
+
+  if (!stripe) {
+    return NextResponse.json(
+      { error: "Stripe не е конфигуриран." },
+      { status: 503 }
+    );
+  }
+
   const session = await getDashboardSession();
   if (!session) {
     return NextResponse.json({ error: "Неоторизиран достъп" }, { status: 401 });

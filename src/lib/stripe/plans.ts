@@ -1,6 +1,8 @@
 // plans — Stripe price IDs and plan limits for Bulgarian SaaS tiers
 import type { Organization, Plan, PlanId } from "@/types";
 
+export const STRIPE_MOCK_MODE = process.env.STRIPE_MOCK_MODE === "true";
+
 export const PLANS: Record<PlanId, Plan & {
   stripe_price_monthly: string | null;
   stripe_price_yearly: string | null;

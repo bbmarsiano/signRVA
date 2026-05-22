@@ -80,8 +80,16 @@ export default async function proxy(request: NextRequest) {
     return withSessionCookies(supabaseResponse, redirect);
   }
 
-  // Logged-in users should not see auth pages
-  if (user && (pathname === "/login" || pathname === "/register")) {
+  // Logged-in users should not see login; allow /register?invite= for invite links
+  const hasInviteParam =
+    pathname === "/register" && request.nextUrl.searchParams.has("invite");
+
+  if (user && pathname === "/login") {
+    const redirect = NextResponse.redirect(new URL("/", request.url));
+    return withSessionCookies(supabaseResponse, redirect);
+  }
+
+  if (user && pathname === "/register" && !hasInviteParam) {
     const redirect = NextResponse.redirect(new URL("/", request.url));
     return withSessionCookies(supabaseResponse, redirect);
   }

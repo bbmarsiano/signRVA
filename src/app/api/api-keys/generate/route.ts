@@ -1,68 +1,105 @@
 // POST /api/api-keys/generate — create API key (shown once)
+import crypto from "crypto";
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
-import { generateApiKey } from "@/lib/api/hash-key";
-import { getDashboardSession } from "@/lib/dashboard/session";
 import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
-  const session = await getDashboardSession();
-  if (!session) {
-    return NextResponse.json({ error: "Неоторизиран достъп" }, { status: 401 });
-  }
+  try {
+    console.log("API key generate: Step 1 — auth");
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-  if (session.organization.plan !== "business") {
-    return NextResponse.json(
-      { error: "API ключовете са достъпни само за Business план." },
-      { status: 403 }
-    );
-  }
+    if (!user || authError) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  const body = await request.json().catch(() => null);
-  const name = (body?.name as string)?.trim();
-  const isLive = body?.is_live !== false;
+    console.log("API key generate: Step 2 — org lookup", user.id);
+    const { data: userRow, error: userError } = await supabaseAdmin
+      .from("users")
+      .select("org_id, role")
+      .eq("id", user.id)
+      .single();
 
-  if (!name) {
-    return NextResponse.json({ error: "Въведете име на ключа." }, { status: 400 });
-  }
+    console.log("userRow result:", userRow, userError);
 
-  const { fullKey, keyPrefix, keyHash } = generateApiKey(isLive);
-  const supabase = await createClient();
+    if (!userRow?.org_id) {
+      return NextResponse.json(
+        { error: "Организацията не е намерена" },
+        { status: 400 }
+      );
+    }
 
-  const { data: row, error } = await supabase
-    .from("api_keys")
-    .insert({
-      id: randomUUID(),
-      org_id: session.organization.id,
-      name,
-      key_hash: keyHash,
+    const { data: org } = await supabaseAdmin
+      .from("organizations")
+      .select("plan")
+      .eq("id", userRow.org_id)
+      .single();
+
+    console.log("org plan:", org?.plan);
+
+    if (org?.plan !== "business") {
+      return NextResponse.json(
+        { error: "API достъпът е наличен само за Бизнес план" },
+        { status: 403 }
+      );
+    }
+
+    const body = await request.json().catch(() => null);
+    const name = (body?.name as string)?.trim();
+    const isLive = body?.is_live !== false;
+
+    if (!name) {
+      return NextResponse.json({ error: "Името е задължително" }, { status: 400 });
+    }
+
+    console.log("API key generate: Step 3 — generating key");
+
+    const rawKey = crypto.randomBytes(32).toString("hex");
+    const fullKey = `sk_${isLive ? "live" : "test"}_${rawKey}`;
+    const keyHash = crypto.createHash("sha256").update(fullKey).digest("hex");
+    const keyPrefix = fullKey.slice(0, 16);
+
+    console.log("API key generate: Step 4 — hashing done");
+    console.log("API key generate: Step 5 — inserting to DB");
+
+    const { data: newKey, error: insertError } = await supabaseAdmin
+      .from("api_keys")
+      .insert({
+        id: randomUUID(),
+        org_id: userRow.org_id,
+        name,
+        key_hash: keyHash,
+        key_prefix: keyPrefix,
+        is_live: isLive,
+        last_used_at: null,
+        created_at: new Date().toISOString(),
+      })
+      .select("id, org_id, name, key_prefix, is_live, created_at")
+      .single();
+
+    if (insertError) {
+      console.error("Insert error:", insertError);
+      return NextResponse.json({ error: insertError.message }, { status: 500 });
+    }
+
+    console.log("API key generate: Step 6 — success", newKey.id);
+
+    return NextResponse.json({
+      success: true,
+      key: fullKey,
+      id: newKey.id,
+      name: newKey.name,
       key_prefix: keyPrefix,
       is_live: isLive,
-      last_used_at: null,
-      created_at: new Date().toISOString(),
-    })
-    .select("id, name, key_prefix, is_live, created_at")
-    .single();
-
-  if (error || !row) {
-    return NextResponse.json(
-      { error: "Грешка при създаване на ключа." },
-      { status: 500 }
-    );
+      api_key: newKey,
+    });
+  } catch (error) {
+    console.error("API key generate error:", error);
+    return NextResponse.json({ error: String(error) }, { status: 500 });
   }
-
-  await supabase.from("audit_log").insert({
-    org_id: session.organization.id,
-    document_id: null,
-    event_type: "api.request",
-    actor: session.user.email,
-    metadata: { action: "api_key.created", key_prefix: keyPrefix, is_live: isLive },
-    ip_address: "dashboard",
-    created_at: new Date().toISOString(),
-  });
-
-  return NextResponse.json({
-    key: fullKey,
-    api_key: row,
-  });
 }

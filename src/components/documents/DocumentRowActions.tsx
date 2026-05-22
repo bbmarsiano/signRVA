@@ -10,6 +10,7 @@ import {
   IconQrcode,
   IconRefresh,
 } from "@tabler/icons-react";
+import { useToast } from "@/components/ui/Toast";
 import { buildSignUrl } from "@/lib/email/send-document";
 import { getSigningType, parseSigners } from "@/lib/sign/signers";
 import type { Document } from "@/types";
@@ -46,6 +47,7 @@ export default function DocumentRowActions({
 }) {
   const [loading, setLoading] = useState(false);
   const [showQr, setShowQr] = useState(false);
+  const { addToast } = useToast();
   const [copied, setCopied] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +78,7 @@ export default function DocumentRowActions({
   async function handleCopy(url: string) {
     try {
       await navigator.clipboard.writeText(url);
+      addToast("Линкът е копиран", "success");
       setCopied(true);
       setCopiedUrl(url);
       setTimeout(() => {
@@ -84,6 +87,7 @@ export default function DocumentRowActions({
       }, 2000);
     } catch {
       setError("Неуспешно копиране.");
+      addToast("Неуспешно копиране", "error");
     }
   }
 

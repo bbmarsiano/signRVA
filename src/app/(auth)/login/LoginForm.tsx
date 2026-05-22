@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -11,7 +11,7 @@ import AuthLayout, {
   PRIMARY_COLOR,
 } from "@/components/auth/AuthLayout";
 
-export default function LoginForm() {
+export default function LoginForm({ flash }: { flash?: ReactNode }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -37,6 +37,19 @@ export default function LoginForm() {
       return;
     }
 
+    const inviteOrgId = searchParams.get("invite");
+    if (inviteOrgId) {
+      try {
+        await fetch("/api/team/accept-invite", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ org_id: inviteOrgId }),
+        });
+      } catch {
+        // Non-blocking; trigger may have already applied on signup
+      }
+    }
+
     const redirectTo = searchParams.get("redirectTo") ?? "/";
     router.push(redirectTo);
     router.refresh();
@@ -58,6 +71,7 @@ export default function LoginForm() {
         </>
       }
     >
+      {flash}
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label htmlFor="email" className={authLabelClass}>

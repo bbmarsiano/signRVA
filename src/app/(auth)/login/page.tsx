@@ -1,8 +1,20 @@
 // Login page — email/password sign-in via Supabase Auth
 import { Suspense } from "react";
+import LoginFlashMessages from "@/components/auth/LoginFlashMessages";
 import LoginForm from "./LoginForm";
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    confirmed?: string;
+    registered?: string;
+    invited?: string;
+    error?: string;
+  }>;
+}) {
+  const params = await searchParams;
+
   return (
     <Suspense
       fallback={
@@ -11,7 +23,7 @@ export default function LoginPage() {
         </div>
       }
     >
-      <LoginForm />
+      <LoginForm flash={<LoginFlashMessages searchParams={params} />} />
     </Suspense>
   );
 }

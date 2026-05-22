@@ -1,5 +1,6 @@
 // Dashboard session — fetch authenticated user and organization for server layouts
 import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import type { Organization, User } from "@/types";
 
 export const FALLBACK_ORGANIZATION: Organization = {
@@ -37,37 +38,29 @@ export async function getDashboardSession(): Promise<{
 
     if (authError || !authUser) return null;
 
-    let profile: User | null = null;
-    try {
-      const { data } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", authUser.id)
-        .single<User>();
-      profile = data;
-    } catch {
-      profile = null;
-    }
+    const { data: profile } = await supabaseAdmin
+      .from("users")
+      .select("*")
+      .eq("id", authUser.id)
+      .maybeSingle<User>();
 
     const user = profile ?? fallbackUser(authUser);
 
     let organization: Organization | null = null;
-    if (profile?.org_id) {
-      try {
-        const { data } = await supabase
-          .from("organizations")
-          .select("*")
-          .eq("id", profile.org_id)
-          .single<Organization>();
-        organization = data;
-      } catch {
-        organization = null;
-      }
+    const orgId = profile?.org_id;
+
+    if (orgId) {
+      const { data: org } = await supabaseAdmin
+        .from("organizations")
+        .select("*")
+        .eq("id", orgId)
+        .single<Organization>();
+      organization = org;
     }
 
     const org = organization ?? {
       ...FALLBACK_ORGANIZATION,
-      id: profile?.org_id ?? "",
+      id: orgId ?? "",
     };
 
     if (!user.org_id && org.id) {

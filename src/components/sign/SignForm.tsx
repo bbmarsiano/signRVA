@@ -9,6 +9,7 @@ import SignatureCanvas, {
 import BiometricButton from "@/components/sign/BiometricButton";
 import DocumentPreview from "@/components/sign/DocumentPreview";
 import RecipientSignFields from "@/components/sign/RecipientSignFields";
+import { useToast } from "@/components/ui/Toast";
 import SignSuccess from "@/components/sign/SignSuccess";
 import type { BiometricType, Document, TemplateField } from "@/types";
 
@@ -100,6 +101,7 @@ export default function SignForm({
   templateName?: string;
   templateId?: string | null;
 }) {
+  const { addToast } = useToast();
   const needsFieldsStep =
     recipientFields.length > 0 && !document.recipient_fields_filled;
 
@@ -138,11 +140,12 @@ export default function SignForm({
   }, []);
 
   const handleFieldsComplete = useCallback(() => {
+    addToast("Данните са запазени", "success");
     setFieldsCompleted(true);
     setCurrentStep("sign");
     setPreviewRefreshKey(Date.now());
     requestAnimationFrame(() => reloadPreviewIframe(token));
-  }, [token]);
+  }, [token, addToast]);
 
   async function handleSubmit() {
     const base64 = canvasRef.current?.getBase64();
@@ -173,6 +176,7 @@ export default function SignForm({
         return;
       }
 
+      addToast("Документът е подписан успешно", "success");
       setSuccess({
         signedPdfUrl: data.signed_pdf_url ?? null,
         signedAt: data.signed_at,

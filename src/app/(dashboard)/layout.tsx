@@ -2,6 +2,7 @@
 import { redirect } from "next/navigation";
 import Sidebar from "@/components/dashboard/Sidebar";
 import Topbar from "@/components/dashboard/Topbar";
+import DashboardProviders from "@/components/providers/DashboardProviders";
 import ErrorBoundary from "@/components/ui/ErrorBoundary";
 import {
   FALLBACK_ORGANIZATION,
@@ -30,14 +31,16 @@ export default async function DashboardLayout({
   const organization = session.organization ?? FALLBACK_ORGANIZATION;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-zinc-50">
-      <Sidebar organization={organization} user={user} />
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Topbar user={user} />
-        <main className="flex-1 overflow-y-auto p-6">
-          <ErrorBoundary>{children}</ErrorBoundary>
-        </main>
+    <DashboardProviders>
+      <div className="flex h-screen overflow-hidden bg-zinc-50">
+        <Sidebar organization={organization} user={user} />
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <Topbar user={user} />
+          <main className="flex-1 overflow-y-auto p-6">
+            <ErrorBoundary>{children}</ErrorBoundary>
+          </main>
+        </div>
       </div>
-    </div>
+    </DashboardProviders>
   );
 }

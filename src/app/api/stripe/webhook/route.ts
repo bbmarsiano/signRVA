@@ -4,7 +4,7 @@ import type Stripe from "stripe";
 import { sendPaymentFailedEmail } from "@/lib/email/payment-failed";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { stripe } from "@/lib/stripe/client";
-import { getPlanFromPriceId, getPlanLimits } from "@/lib/stripe/plans";
+import { getPlanFromPriceId, getPlanLimits, STRIPE_MOCK_MODE } from "@/lib/stripe/plans";
 import type { PlanId } from "@/types";
 
 async function updateOrganization(
@@ -25,6 +25,14 @@ async function applyPlan(orgId: string, planId: PlanId, subscriptionId?: string)
 }
 
 export async function POST(request: Request) {
+  if (STRIPE_MOCK_MODE) {
+    return NextResponse.json({ received: true, mock: true });
+  }
+
+  if (!stripe) {
+    return NextResponse.json({ error: "Stripe not configured" }, { status: 503 });
+  }
+
   const body = await request.text();
   const signature = request.headers.get("stripe-signature");
 

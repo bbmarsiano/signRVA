@@ -5,6 +5,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import SenderFieldsForm from "@/components/documents/SenderFieldsForm";
+import { useToast } from "@/components/ui/Toast";
 import { useWizardSteps, type WizardStepKey } from "@/components/documents/useWizardSteps";
 import { categoryToCreateSlug } from "@/lib/templates/constants";
 import type { SigningOrder, SigningType, Template } from "@/types";
@@ -117,6 +118,7 @@ function ToggleRow({
 function UploadWizardInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { addToast } = useToast();
   const urlTemplateId = searchParams.get("template");
 
   const [stepIndex, setStepIndex] = useState(0);
@@ -491,9 +493,14 @@ function UploadWizardInner() {
 
   async function handleCopyLink() {
     if (!createResult?.sign_url) return;
-    await navigator.clipboard.writeText(createResult.sign_url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(createResult.sign_url);
+      addToast("Линкът е копиран", "success");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      addToast("Неуспешно копиране", "error");
+    }
   }
 
   function handleDownloadQr() {
@@ -521,6 +528,7 @@ function UploadWizardInner() {
       });
       const data = await res.json();
       if (!res.ok) {
+        addToast("Грешка при изпращане", "error");
         setError(
           (data.error as string) ??
             "Грешка при изпращане. Можете да копирате линка или QR кода ръчно."
@@ -532,10 +540,12 @@ function UploadWizardInner() {
         return;
       }
       if (data.success) {
+        addToast("Документът е изпратен успешно", "success");
         router.push("/documents");
         router.refresh();
       }
     } catch {
+      addToast("Грешка при изпращане", "error");
       setError(
         "Грешка при изпращане на имейла. Можете да копирате линка или QR кода ръчно."
       );
